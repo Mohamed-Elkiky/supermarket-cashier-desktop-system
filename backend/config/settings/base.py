@@ -56,6 +56,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.core.middleware.RequestLoggingMiddleware',
+    'apps.core.middleware.SqlInjectionProtectionMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -102,9 +103,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'accounts.CustomUser'
 
-VAULT_ADDR  = env('VAULT_ADDR', default='http://127.0.0.1:8200')
-
+# ── Vault ──────────────────────────────────────────────────────
+VAULT_ADDR  = env('VAULT_ADDR',  default='http://127.0.0.1:8200')
 VAULT_TOKEN = env('VAULT_TOKEN', default='')
+
 # ── Django REST Framework ──────────────────────────────────────
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
