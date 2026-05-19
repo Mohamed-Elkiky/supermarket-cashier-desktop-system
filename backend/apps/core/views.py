@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.db import connection
+from django.conf import settings
 from apps.accounts.permissions import IsStoreManager
 from apps.accounts.decorators import role_required
 
@@ -16,6 +17,8 @@ class HealthCheckView(APIView):
         except Exception:
             db_ok = False
 
+        is_secure = request.is_secure()
+
         status_code = 200 if db_ok else 503
         return Response(
             {
@@ -23,7 +26,9 @@ class HealthCheckView(APIView):
                 'status': 'ok' if db_ok else 'degraded',
                 'checks': {
                     'database': 'ok' if db_ok else 'error',
+                    'tls':      'ok' if is_secure else 'not enforced in dev',
                 },
+                'environment': 'production' if not settings.DEBUG else 'development',
             },
             status=status_code,
         )
