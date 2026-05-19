@@ -1,7 +1,9 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.db import connection
+from apps.accounts.permissions import IsStoreManager
+from apps.accounts.decorators import role_required
 
 
 class HealthCheckView(APIView):
@@ -25,3 +27,10 @@ class HealthCheckView(APIView):
             },
             status=status_code,
         )
+
+
+class ManagerOnlyView(APIView):
+    permission_classes = [IsAuthenticated, IsStoreManager]
+
+    def get(self, request):
+        return Response({'success': True, 'message': 'You are a manager or above.'})
