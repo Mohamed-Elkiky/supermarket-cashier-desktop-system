@@ -1,9 +1,10 @@
 import logging
+
 import hvac
 from cryptography.fernet import Fernet
 from django.conf import settings
 
-logger = logging.getLogger('apps.core')
+logger = logging.getLogger("apps.core")
 
 # In-memory key cache — fetched once from Vault on first use
 _fernet_instance = None
@@ -19,14 +20,14 @@ def _get_vault_client():
 def _load_key_from_vault() -> Fernet:
     client = _get_vault_client()
     if not client.is_authenticated():
-        raise RuntimeError('Vault authentication failed — check VAULT_TOKEN.')
+        raise RuntimeError("Vault authentication failed — check VAULT_TOKEN.")
 
     secret = client.secrets.kv.v2.read_secret_version(
-        path='supermarket/encryption',
-        mount_point='secret',
+        path="supermarket/encryption",
+        mount_point="secret",
     )
-    key = secret['data']['data']['ENCRYPTION_KEY']
-    logger.info('Encryption key loaded from Vault successfully.')
+    key = secret["data"]["data"]["ENCRYPTION_KEY"]
+    logger.info("Encryption key loaded from Vault successfully.")
     return Fernet(key.encode())
 
 

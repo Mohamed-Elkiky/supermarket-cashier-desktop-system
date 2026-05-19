@@ -1,5 +1,6 @@
 from django.db import models
-from .encryption import encrypt, decrypt
+
+from .encryption import decrypt, encrypt
 
 
 class EncryptedField(models.TextField):

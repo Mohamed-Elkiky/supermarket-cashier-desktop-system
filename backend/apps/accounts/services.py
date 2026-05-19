@@ -1,5 +1,5 @@
-from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
 
 
 def generate_tokens(user):
@@ -7,15 +7,15 @@ def generate_tokens(user):
 
     # Embed role into token payload for RBAC checks
     role = None
-    if hasattr(user, 'staff_profile') and user.staff_profile:
+    if hasattr(user, "staff_profile") and user.staff_profile:
         role = user.staff_profile.role
-    refresh['role'] = role
+    refresh["role"] = role
 
     return {
-        'access':  str(refresh.access_token),
-        'refresh': str(refresh),
-        'email':   user.email,
-        'role':    role,
+        "access": str(refresh.access_token),
+        "refresh": str(refresh),
+        "email": user.email,
+        "role": role,
     }
 
 

@@ -1,11 +1,11 @@
 from rest_framework.permissions import BasePermission
 
 ROLE_HIERARCHY = {
-    'cashier':            1,
-    'department_manager': 2,
-    'store_manager':      3,
-    'admin':              4,
-    'owner':              5,
+    "cashier": 1,
+    "department_manager": 2,
+    "store_manager": 3,
+    "admin": 4,
+    "owner": 5,
 }
 
 
@@ -27,6 +27,7 @@ class HasMinimumRole(BasePermission):
     Base permission class. Subclasses set `minimum_role`.
     Grants access if the user's current DB role meets or exceeds it.
     """
+
     minimum_role = None
 
     def has_permission(self, request, view):
@@ -37,20 +38,20 @@ class HasMinimumRole(BasePermission):
 
 
 class IsCashier(HasMinimumRole):
-    minimum_role = 'cashier'
+    minimum_role = "cashier"
 
 
 class IsDepartmentManager(HasMinimumRole):
-    minimum_role = 'department_manager'
+    minimum_role = "department_manager"
 
 
 class IsStoreManager(HasMinimumRole):
-    minimum_role = 'store_manager'
+    minimum_role = "store_manager"
 
 
 class IsAdmin(HasMinimumRole):
-    minimum_role = 'admin'
+    minimum_role = "admin"
 
 
 class IsOwner(HasMinimumRole):
-    minimum_role = 'owner'
+    minimum_role = "owner"

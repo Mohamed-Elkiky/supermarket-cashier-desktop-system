@@ -1,10 +1,11 @@
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.db import connection
 from django.conf import settings
-from apps.accounts.permissions import IsStoreManager
+from django.db import connection
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from apps.accounts.decorators import role_required
+from apps.accounts.permissions import IsStoreManager
 
 
 class HealthCheckView(APIView):
@@ -22,13 +23,13 @@ class HealthCheckView(APIView):
         status_code = 200 if db_ok else 503
         return Response(
             {
-                'success': True,
-                'status': 'ok' if db_ok else 'degraded',
-                'checks': {
-                    'database': 'ok' if db_ok else 'error',
-                    'tls':      'ok' if is_secure else 'not enforced in dev',
+                "success": True,
+                "status": "ok" if db_ok else "degraded",
+                "checks": {
+                    "database": "ok" if db_ok else "error",
+                    "tls": "ok" if is_secure else "not enforced in dev",
                 },
-                'environment': 'production' if not settings.DEBUG else 'development',
+                "environment": "production" if not settings.DEBUG else "development",
             },
             status=status_code,
         )
@@ -38,4 +39,4 @@ class ManagerOnlyView(APIView):
     permission_classes = [IsAuthenticated, IsStoreManager]
 
     def get(self, request):
-        return Response({'success': True, 'message': 'You are a manager or above.'})
+        return Response({"success": True, "message": "You are a manager or above."})

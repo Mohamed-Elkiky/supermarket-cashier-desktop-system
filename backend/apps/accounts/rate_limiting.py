@@ -1,25 +1,26 @@
 import logging
+
 from django.core.cache import cache
 
-logger = logging.getLogger('apps.accounts')
+logger = logging.getLogger("apps.accounts")
 
 # Rate limiting config
-IP_RATE_LIMIT         = 20    # max login attempts per IP per window
-USER_RATE_LIMIT       = 5     # max failed attempts per user before lockout
-RATE_WINDOW_SECONDS   = 60    # sliding window in seconds
-LOCKOUT_SECONDS       = 900   # 15 minutes lockout
+IP_RATE_LIMIT = 20  # max login attempts per IP per window
+USER_RATE_LIMIT = 5  # max failed attempts per user before lockout
+RATE_WINDOW_SECONDS = 60  # sliding window in seconds
+LOCKOUT_SECONDS = 900  # 15 minutes lockout
 
 
 def _ip_attempts_key(ip: str) -> str:
-    return f'auth:ip_attempts:{ip}'
+    return f"auth:ip_attempts:{ip}"
 
 
 def _user_attempts_key(email: str) -> str:
-    return f'auth:user_attempts:{email}'
+    return f"auth:user_attempts:{email}"
 
 
 def _user_locked_key(email: str) -> str:
-    return f'auth:user_locked:{email}'
+    return f"auth:user_locked:{email}"
 
 
 def is_ip_rate_limited(ip: str) -> bool:
@@ -47,8 +48,10 @@ def record_failed_attempt(ip: str, email: str):
     if user_attempts >= USER_RATE_LIMIT:
         cache.set(_user_locked_key(email), True, timeout=LOCKOUT_SECONDS)
         logger.warning(
-            'Account locked after %d failed attempts: %s from IP %s',
-            user_attempts, email, ip,
+            "Account locked after %d failed attempts: %s from IP %s",
+            user_attempts,
+            email,
+            ip,
         )
 
 
