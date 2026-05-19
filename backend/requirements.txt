@@ -21,3 +21,5 @@ faker==26.0.0
 flake8==7.1.0
 black==24.8.0
 isort==5.13.2
+hvac==2.4.0
+cryptography==48.0.0
