@@ -1,5 +1,7 @@
-import environ
+from datetime import timedelta
 from pathlib import Path
+
+import environ
 
 env = environ.Env()
 
@@ -25,6 +27,8 @@ THIRD_PARTY_APPS = [
     'corsheaders',
     'drf_spectacular',
     'django_filters',
+    'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
 ]
 
 LOCAL_APPS = [
@@ -96,6 +100,8 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+AUTH_USER_MODEL = 'accounts.CustomUser'
+
 # ── Django REST Framework ──────────────────────────────────────
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -113,6 +119,19 @@ REST_FRAMEWORK = {
     'EXCEPTION_HANDLER': 'apps.core.exceptions.global_exception_handler',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 50,
+}
+
+# ── JWT ────────────────────────────────────────────────────────
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME':    timedelta(minutes=15),
+    'REFRESH_TOKEN_LIFETIME':   timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS':    True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN':        True,
+    'ALGORITHM':                'HS256',
+    'AUTH_HEADER_TYPES':        ('Bearer',),
+    'USER_ID_FIELD':            'id',
+    'USER_ID_CLAIM':            'user_id',
 }
 
 # ── CORS ───────────────────────────────────────────────────────
