@@ -1,17 +1,21 @@
 import logging
-
-from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 
-from .rate_limiting import (clear_failed_attempts, get_lockout_remaining,
-                            is_ip_rate_limited, is_user_locked,
-                            record_failed_attempt)
 from .serializers import LoginSerializer, LogoutSerializer, RefreshSerializer
-from .services import blacklist_token, generate_tokens
+from .services import generate_tokens, blacklist_token
+from .rate_limiting import (
+    is_ip_rate_limited,
+    is_user_locked,
+    record_failed_attempt,
+    clear_failed_attempts,
+    get_lockout_remaining,
+)
+from apps.core.activity import log_activity
 
 logger = logging.getLogger("apps.accounts")
 
@@ -30,7 +34,6 @@ class LoginView(APIView):
         ip = get_client_ip(request)
         email = request.data.get("email", "").lower().strip()
 
-        # Per-IP rate limit
         if is_ip_rate_limited(ip):
             logger.warning("IP rate limited: %s", ip)
             return Response(
@@ -45,7 +48,6 @@ class LoginView(APIView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        # Per-user lockout
         if email and is_user_locked(email):
             remaining = get_lockout_remaining(email)
             logger.warning("Locked account login attempt: %s from IP %s", email, ip)
@@ -82,11 +84,17 @@ class LoginView(APIView):
             )
 
         user = serializer.validated_data["user"]
-
-        # Clear failed attempts on successful login
         clear_failed_attempts(ip, email)
-
         tokens = generate_tokens(user)
+
+        log_activity(
+            request=request,
+            action="auth.login",
+            entity_type="auth_users",
+            entity_id=user.id,
+            after_state={"email": user.email, "ip": ip},
+        )
+
         logger.info("User logged in: %s from IP %s", user.email, ip)
         return Response({"success": True, "data": tokens}, status=status.HTTP_200_OK)
 
@@ -101,12 +109,18 @@ class LogoutView(APIView):
             blacklist_token(serializer.validated_data["refresh"])
         except ValueError as e:
             return Response(
-                {
-                    "success": False,
-                    "error": {"code": "InvalidToken", "errors": [str(e)]},
-                },
+                {"success": False, "error": {"code": "InvalidToken", "errors": [str(e)]}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        log_activity(
+            request=request,
+            action="auth.logout",
+            entity_type="auth_users",
+            entity_id=request.user.id,
+            after_state={"email": request.user.email},
+        )
+
         logger.info("User logged out: %s", request.user.email)
         return Response({"success": True}, status=status.HTTP_200_OK)
 
@@ -122,17 +136,11 @@ class SilentRefreshView(APIView):
             new_access = str(refresh.access_token)
             new_refresh = str(refresh)
             return Response(
-                {
-                    "success": True,
-                    "data": {"access": new_access, "refresh": new_refresh},
-                },
+                {"success": True, "data": {"access": new_access, "refresh": new_refresh}},
                 status=status.HTTP_200_OK,
             )
         except TokenError as e:
             return Response(
-                {
-                    "success": False,
-                    "error": {"code": "InvalidToken", "errors": [str(e)]},
-                },
+                {"success": False, "error": {"code": "InvalidToken", "errors": [str(e)]}},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
