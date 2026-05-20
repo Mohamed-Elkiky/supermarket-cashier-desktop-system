@@ -39,9 +39,7 @@ class LoginView(APIView):
                     "error": {
                         "code": "RateLimitExceeded",
                         "status": 429,
-                        "errors": [
-                            "Too many login attempts from this IP. Try again later."
-                        ],
+                        "errors": ["Too many login attempts from this IP. Try again later."],
                     },
                 },
                 status=status.HTTP_429_TOO_MANY_REQUESTS,

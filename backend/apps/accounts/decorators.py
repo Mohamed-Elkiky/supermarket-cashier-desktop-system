@@ -38,8 +38,7 @@ def role_required(minimum_role):
                             "code": "PermissionDenied",
                             "status": 403,
                             "errors": [
-                                f"This action requires {minimum_role} role or above. "
-                                f"Your current role is {role}."
+                                f"This action requires {minimum_role} role or above. " f"Your current role is {role}."
                             ],
                         },
                     },

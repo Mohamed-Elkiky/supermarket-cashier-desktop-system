@@ -24,9 +24,7 @@ def global_exception_handler(exc, context):
         exc = exceptions.PermissionDenied()
         response = exception_handler(exc, context)
     elif isinstance(exc, ValidationError):
-        exc = exceptions.ValidationError(
-            detail=exc.message_dict if hasattr(exc, "message_dict") else exc.messages
-        )
+        exc = exceptions.ValidationError(detail=exc.message_dict if hasattr(exc, "message_dict") else exc.messages)
         response = exception_handler(exc, context)
 
     if response is not None:
@@ -39,10 +37,7 @@ def global_exception_handler(exc, context):
         elif isinstance(detail, list):
             errors = [str(e) for e in detail]
         elif isinstance(detail, dict):
-            errors = {
-                k: [str(e) for e in v] if isinstance(v, list) else str(v)
-                for k, v in detail.items()
-            }
+            errors = {k: [str(e) for e in v] if isinstance(v, list) else str(v) for k, v in detail.items()}
         else:
             errors = [str(detail)]
 
