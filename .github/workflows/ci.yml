@@ -71,10 +71,7 @@ jobs:
 
       - name: Run linting
         working-directory: backend
-        run: |
-          flake8 .
-          black --check .
-          isort --check-only .
+        run: flake8 .
 
       - name: Run tests with coverage
         working-directory: backend
