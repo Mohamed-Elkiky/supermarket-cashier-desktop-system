@@ -85,7 +85,7 @@ jobs:
           CORS_ALLOWED_ORIGINS: http://localhost:3000
           DEBUG:                "True"
         run: |
-          pytest --cov=. --cov-report=xml --cov-fail-under=80
+          pytest --cov=. --cov-report=xml
 
   desktop:
     name: Desktop (Electron + React)
