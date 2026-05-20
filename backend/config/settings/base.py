@@ -147,8 +147,21 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Internal API for the supermarket cashier desktop system",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "SECURITY": [{"BearerAuth": []}],
+    "COMPONENTS": {
+        "securitySchemes": {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+            }
+        }
+    },
+    "TAGS": [
+        {"name": "Authentication", "description": "Login, logout and token refresh"},
+        {"name": "System", "description": "Health check and system endpoints"},
+    ],
 }
-
 # ── Caching / Redis ────────────────────────────────────────────
 CACHES = {
     "default": {

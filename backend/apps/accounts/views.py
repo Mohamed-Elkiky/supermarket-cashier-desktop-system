@@ -5,6 +5,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample
 
 from .serializers import LoginSerializer, LogoutSerializer, RefreshSerializer
 from .services import generate_tokens, blacklist_token
@@ -30,6 +31,33 @@ def get_client_ip(request) -> str:
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        summary="Login",
+        description="Authenticate with email and password. Returns a 15-minute access token and a 7-day rotating refresh token. Account is locked after 5 failed attempts for 15 minutes.",
+        request=LoginSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="Login successful",
+                examples=[
+                    OpenApiExample(
+                        "Success",
+                        value={
+                            "success": True,
+                            "data": {
+                                "access": "eyJ...",
+                                "refresh": "eyJ...",
+                                "email": "staff@store.com",
+                                "role": "cashier",
+                            },
+                        },
+                    )
+                ],
+            ),
+            400: OpenApiResponse(description="Invalid credentials"),
+            429: OpenApiResponse(description="Rate limited or account locked"),
+        },
+        tags=["Authentication"],
+    )
     def post(self, request):
         ip = get_client_ip(request)
         email = request.data.get("email", "").lower().strip()
@@ -102,6 +130,17 @@ class LoginView(APIView):
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Logout",
+        description="Blacklist the refresh token. The access token expires naturally after 15 minutes. Requires a valid Bearer token in the Authorization header.",
+        request=LogoutSerializer,
+        responses={
+            200: OpenApiResponse(description="Logged out successfully"),
+            400: OpenApiResponse(description="Invalid or already blacklisted token"),
+            401: OpenApiResponse(description="Not authenticated"),
+        },
+        tags=["Authentication"],
+    )
     def post(self, request):
         serializer = LogoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -128,6 +167,30 @@ class LogoutView(APIView):
 class SilentRefreshView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        summary="Silent token refresh",
+        description="Exchange a valid refresh token for a new access token and rotated refresh token. Call this before the access token expires to keep the user logged in seamlessly.",
+        request=RefreshSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="New tokens issued",
+                examples=[
+                    OpenApiExample(
+                        "Success",
+                        value={
+                            "success": True,
+                            "data": {
+                                "access": "eyJ...",
+                                "refresh": "eyJ...",
+                            },
+                        },
+                    )
+                ],
+            ),
+            401: OpenApiResponse(description="Refresh token invalid or blacklisted"),
+        },
+        tags=["Authentication"],
+    )
     def post(self, request):
         serializer = RefreshSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
