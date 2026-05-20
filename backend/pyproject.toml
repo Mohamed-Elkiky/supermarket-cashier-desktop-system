@@ -18,6 +18,7 @@ skip = ["migrations"]
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.dev"
 python_files = ["tests.py", "test_*.py", "*_test.py"]
+addopts = "--ignore=migrations"
 
 [tool.coverage.run]
 omit = [
