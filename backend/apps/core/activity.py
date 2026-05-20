@@ -1,4 +1,7 @@
 import logging
+import json
+
+from django.db import connection, transaction
 from django.utils import timezone
 
 logger = logging.getLogger("apps.core")
@@ -21,8 +24,6 @@ def log_activity(
         log_activity(request, 'product.update', 'product_variant', variant.id,
                      before_state=old_data, after_state=new_data)
     """
-    from django.db import connection
-
     try:
         actor_id = None
         actor_role = None
@@ -35,39 +36,40 @@ def log_activity(
         ip_address = _get_client_ip(request)
         device_identifier = _get_device_identifier(request)
 
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO activity_log (
-                    actor_staff_id,
-                    actor_role,
-                    action,
-                    entity_type,
-                    entity_id,
-                    before_state,
-                    after_state,
-                    device_identifier,
-                    ip_address,
-                    occurred_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s,
-                    %s::jsonb, %s::jsonb,
-                    %s, %s, %s
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO activity_log (
+                        actor_staff_id,
+                        actor_role,
+                        action,
+                        entity_type,
+                        entity_id,
+                        before_state,
+                        after_state,
+                        device_identifier,
+                        ip_address,
+                        occurred_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s::jsonb, %s::jsonb,
+                        %s, %s, %s
+                    )
+                    """,
+                    [
+                        actor_id,
+                        actor_role,
+                        action,
+                        entity_type,
+                        str(entity_id),
+                        _to_json(before_state),
+                        _to_json(after_state),
+                        device_identifier,
+                        ip_address,
+                        timezone.now(),
+                    ],
                 )
-                """,
-                [
-                    actor_id,
-                    actor_role,
-                    action,
-                    entity_type,
-                    str(entity_id),
-                    _to_json(before_state),
-                    _to_json(after_state),
-                    device_identifier,
-                    ip_address,
-                    timezone.now(),
-                ],
-            )
 
     except Exception as e:
         # Never let activity logging break the main operation
@@ -93,5 +95,4 @@ def _get_device_identifier(request) -> str:
 def _to_json(data: dict):
     if data is None:
         return None
-    import json
     return json.dumps(data)
