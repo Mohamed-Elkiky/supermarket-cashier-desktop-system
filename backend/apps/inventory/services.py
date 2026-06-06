@@ -1,9 +1,23 @@
 import logging
+from decimal import Decimal
+
 from django.db import transaction
-from .models import Product, ProductVariant, ProductVariantAllergen, Supplier, Allergen
+from django.db.models import Sum
+from django.utils import timezone
+
+from .models import (
+    Allergen,
+    InventoryLedger,
+    LedgerLocation,
+    Product,
+    ProductVariant,
+    ProductVariantAllergen,
+)
 
 logger = logging.getLogger("apps.inventory")
 
+
+# ── Products ──────────────────────────────────────────────────────────────────
 
 @transaction.atomic
 def create_product(
@@ -71,14 +85,6 @@ def update_variant(variant: ProductVariant, validated_data: dict) -> ProductVari
 
 @transaction.atomic
 def set_variant_allergens(variant: ProductVariant, allergen_data: list) -> list:
-    """
-    Atomically replace all allergen links for a variant.
-
-    allergen_data: [{"allergen_id": 1, "may_contain": False}, ...]
-
-    Raises Allergen.DoesNotExist if any allergen_id is not found —
-    the transaction rolls back so the variant is left unchanged.
-    """
     variant.allergen_links.all().delete()
     links = []
     for item in allergen_data:
@@ -89,17 +95,11 @@ def set_variant_allergens(variant: ProductVariant, allergen_data: list) -> list:
             may_contain=item.get("may_contain", False),
         )
         links.append(link)
-    logger.info(
-        "Set %d allergen link(s) on variant id=%s", len(links), variant.id
-    )
+    logger.info("Set %d allergen link(s) on variant id=%s", len(links), variant.id)
     return links
 
 
 def get_variant_by_barcode(barcode: str) -> ProductVariant:
-    """
-    Fetch an active variant by barcode. Used by the cashier barcode scanner.
-    Raises ProductVariant.DoesNotExist if not found or inactive.
-    """
     return ProductVariant.objects.select_related(
         "product__department"
     ).prefetch_related(
@@ -110,17 +110,9 @@ def get_variant_by_barcode(barcode: str) -> ProductVariant:
 def calculate_line_total(
     variant: ProductVariant, weight_kg: float = None, quantity: int = 1
 ) -> dict:
-    """
-    Return a structured line-total dict for the given variant.
-
-    For weight_based variants weight_kg is required; quantity is ignored.
-    For fixed variants quantity is used; weight_kg is ignored.
-    """
     if variant.pricing_mode == "weight_based":
         if not weight_kg:
-            raise ValueError(
-                "weight_kg is required for weight-based products."
-            )
+            raise ValueError("weight_kg is required for weight-based products.")
         unit_price = float(variant.sell_price)
         total = round(unit_price * weight_kg, 2)
         return {
@@ -144,3 +136,196 @@ def calculate_line_total(
         "line_total": total,
         "line_total_display": f"£{total:.2f}",
     }
+
+
+# ── Ledger ────────────────────────────────────────────────────────────────────
+
+def record_movement(
+    *,
+    variant: ProductVariant,
+    department,
+    movement_type: str,
+    quantity: Decimal,
+    performed_by=None,
+    location: LedgerLocation = None,
+    weight_kg: Decimal = None,
+    batch_ref: str = "",
+    best_before_date=None,
+    use_by_date=None,
+    order_id: int = None,
+    return_id: int = None,
+    reason: str = "",
+) -> InventoryLedger:
+    """
+    Single write path for all stock movements.
+    Raises ValueError for any business rule violation — nothing is written.
+    """
+    quantity = Decimal(str(quantity))
+    _validate_movement(movement_type, quantity, reason, variant, weight_kg)
+
+    with transaction.atomic():
+        entry = InventoryLedger(
+            variant=variant,
+            department=department,
+            location=location,
+            movement_type=movement_type,
+            quantity=quantity,
+            weight_kg=Decimal(str(weight_kg)) if weight_kg is not None else None,
+            batch_ref=batch_ref or "",
+            best_before_date=best_before_date,
+            use_by_date=use_by_date,
+            order_id=order_id,
+            return_id=return_id,
+            performed_by=performed_by,
+            reason=reason or "",
+        )
+        entry.save()
+
+    logger.info(
+        "Ledger entry recorded: type=%s variant=%s qty=%s dept=%s by=%s",
+        movement_type,
+        variant.sku,
+        quantity,
+        department.name,
+        getattr(performed_by, "id", None),
+    )
+    return entry
+
+
+def _validate_movement(
+    movement_type: str,
+    quantity: Decimal,
+    reason: str,
+    variant: ProductVariant,
+    weight_kg,
+) -> None:
+    valid_types = {c[0] for c in InventoryLedger.MOVEMENT_CHOICES}
+    if movement_type not in valid_types:
+        raise ValueError(f"Unknown movement_type '{movement_type}'.")
+
+    if movement_type in InventoryLedger.OUTBOUND_TYPES and quantity >= 0:
+        raise ValueError(
+            f"Outbound movement '{movement_type}' requires a negative quantity. Got {quantity}."
+        )
+    if movement_type in InventoryLedger.INBOUND_TYPES and quantity <= 0:
+        raise ValueError(
+            f"Inbound movement '{movement_type}' requires a positive quantity. Got {quantity}."
+        )
+    if movement_type == "adjustment" and not (reason or "").strip():
+        raise ValueError("Adjustment entries require a non-empty reason.")
+
+    if variant.pricing_mode == "weight_based" and weight_kg is None:
+        raise ValueError(f"Variant '{variant.sku}' is weight-based; weight_kg is required.")
+
+    if weight_kg is not None and Decimal(str(weight_kg)) <= 0:
+        raise ValueError("weight_kg must be greater than zero.")
+
+
+def get_stock_level(variant_id: int, department_id: int = None) -> dict:
+    """
+    Derive current stock from the ledger sum.
+    Scoped to a department when department_id is provided, otherwise store-wide.
+    """
+    qs = InventoryLedger.objects.filter(variant_id=variant_id)
+    if department_id is not None:
+        qs = qs.filter(department_id=department_id)
+
+    total = qs.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+
+    try:
+        variant = ProductVariant.objects.select_related("product__department").get(pk=variant_id)
+    except ProductVariant.DoesNotExist:
+        raise ValueError(f"Variant {variant_id} not found.")
+
+    return {
+        "variant_id": variant_id,
+        "sku": variant.sku,
+        "name": variant.name,
+        "department_id": department_id,
+        "stock_quantity": float(total),
+        "unit_of_measure": variant.unit_of_measure,
+        "low_stock_threshold": variant.low_stock_threshold,
+        "is_low_stock": float(total) <= variant.low_stock_threshold,
+    }
+
+
+def get_stock_levels_bulk(variant_ids: list, department_id: int = None) -> list:
+    """
+    Aggregate stock levels for a list of variant IDs in a single query.
+    Variants with no ledger entries are returned with stock_quantity 0.0.
+    """
+    qs = InventoryLedger.objects.filter(variant_id__in=variant_ids)
+    if department_id is not None:
+        qs = qs.filter(department_id=department_id)
+
+    totals = {
+        row["variant_id"]: row["total"]
+        for row in qs.values("variant_id").annotate(total=Sum("quantity"))
+    }
+
+    results = []
+    for v in ProductVariant.objects.filter(pk__in=variant_ids).select_related("product"):
+        total = float(totals.get(v.id, Decimal("0")))
+        results.append({
+            "variant_id": v.id,
+            "sku": v.sku,
+            "name": v.name,
+            "department_id": department_id,
+            "stock_quantity": total,
+            "unit_of_measure": v.unit_of_measure,
+            "low_stock_threshold": v.low_stock_threshold,
+            "is_low_stock": total <= v.low_stock_threshold,
+        })
+    return results
+
+
+def get_expiry_alerts(department_id: int, days_ahead: int = None) -> list:
+    """
+    Return batches approaching or past their best_before / use_by date.
+    Aggregates by (variant, batch_ref) — only batches with net stock > 0 appear.
+    days_ahead overrides the per-variant expiry_alert_days when provided.
+    """
+    today = timezone.now().date()
+
+    qs = (
+        InventoryLedger.objects
+        .filter(department_id=department_id)
+        .exclude(best_before_date=None, use_by_date=None)
+        .values(
+            "variant_id",
+            "variant__sku",
+            "variant__name",
+            "variant__expiry_alert_days",
+            "batch_ref",
+            "best_before_date",
+            "use_by_date",
+        )
+        .annotate(net_quantity=Sum("quantity"))
+        .filter(net_quantity__gt=0)
+        .order_by("use_by_date", "best_before_date")
+    )
+
+    alerts = []
+    for row in qs:
+        alert_window = days_ahead if days_ahead is not None else row["variant__expiry_alert_days"]
+        bb = row["best_before_date"]
+        ub = row["use_by_date"]
+        earliest = min(d for d in (bb, ub) if d is not None)
+        days_remaining = (earliest - today).days
+
+        if days_remaining > alert_window:
+            continue
+
+        alerts.append({
+            "variant_id": row["variant_id"],
+            "sku": row["variant__sku"],
+            "name": row["variant__name"],
+            "batch_ref": row["batch_ref"] or None,
+            "best_before_date": bb.isoformat() if bb else None,
+            "use_by_date": ub.isoformat() if ub else None,
+            "days_remaining": days_remaining,
+            "net_quantity": float(row["net_quantity"]),
+            "is_expired": days_remaining < 0,
+        })
+
+    return alerts

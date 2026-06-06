@@ -1,1 +1,3 @@
-test push
+super user 
+admin@store.com
+admin1234

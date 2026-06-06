@@ -1,4 +1,5 @@
 from django.urls import path
+
 from .views import (
     AllergenListView,
     BarcodeLookupView,
@@ -8,13 +9,19 @@ from .views import (
     ProductVariantDetailView,
     ProductVariantAllergenView,
     ProductVariantLineTotalView,
+    LedgerLocationListView,
+    LedgerListView,
+    LedgerMovementView,
+    StockLevelView,
+    StockLevelBulkView,
+    ExpiryAlertView,
 )
 
 urlpatterns = [
     # Allergens
     path("allergens/", AllergenListView.as_view(), name="allergen-list"),
 
-    # Barcode scanner (cashier hot-path)
+    # Barcode scanner
     path("barcode/", BarcodeLookupView.as_view(), name="barcode-lookup"),
 
     # Products
@@ -24,10 +31,20 @@ urlpatterns = [
     # Variants
     path("products/<int:pk>/variants/", ProductVariantListCreateView.as_view(), name="variant-list-create"),
     path("products/<int:pk>/variants/<int:variant_pk>/", ProductVariantDetailView.as_view(), name="variant-detail"),
-
-    # Allergen management for a variant
     path("products/<int:pk>/variants/<int:variant_pk>/allergens/", ProductVariantAllergenView.as_view(), name="variant-allergens"),
-
-    # Line-total calculator (no DB writes)
     path("products/<int:pk>/variants/<int:variant_pk>/line-total/", ProductVariantLineTotalView.as_view(), name="variant-line-total"),
+
+    # Stock levels (ledger-derived)
+    path("stock/<int:variant_pk>/", StockLevelView.as_view(), name="stock-level"),
+    path("stock/bulk/", StockLevelBulkView.as_view(), name="stock-level-bulk"),
+
+    # Ledger locations
+    path("ledger/locations/", LedgerLocationListView.as_view(), name="ledger-location-list"),
+
+    # Ledger entries + movements
+    path("ledger/", LedgerListView.as_view(), name="ledger-list"),
+    path("ledger/movements/", LedgerMovementView.as_view(), name="ledger-movement"),
+
+    # Expiry alerts
+    path("ledger/expiry/<int:department_pk>/", ExpiryAlertView.as_view(), name="expiry-alerts"),
 ]
