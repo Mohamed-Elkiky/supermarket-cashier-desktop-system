@@ -1,3 +1,4 @@
+# backend/apps/pos/services.py
 import logging
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
@@ -29,8 +30,9 @@ def _generate_receipt_number() -> str:
 def _get_active_promotions(variant_ids: list, department_ids: list) -> list:
     """
     Fetch all active promotions that could apply to the basket.
-    Returns promotions ordered by discount_value descending so the
-    best deal is applied first when only one can apply per line.
+    Meal deal promotions are always fetched regardless of department scope
+    because they span multiple departments by design.
+    Returns promotions ordered by discount_value descending.
     """
     now = timezone.now()
     return list(
@@ -38,7 +40,8 @@ def _get_active_promotions(variant_ids: list, department_ids: list) -> list:
         .filter(is_active=True, starts_at__lte=now, ends_at__gte=now)
         .filter(
             models.Q(variant_links__variant_id__in=variant_ids) |
-            models.Q(department_id__in=department_ids, variant_links__isnull=True)
+            models.Q(department_id__in=department_ids, variant_links__isnull=True) |
+            models.Q(promotion_type="meal_deal")
         )
         .distinct()
         .order_by("-discount_value")
@@ -57,22 +60,19 @@ def _apply_promotion(promotion: Promotion, unit_price_pence: int, quantity: int)
         return int((Decimal(unit_price_pence * quantity) * rate).to_integral_value(ROUND_HALF_UP))
 
     if t == "fixed_amount_off":
-        # discount_value is in pounds, convert to pence
         discount = _pence(promotion.discount_value)
         return min(discount, unit_price_pence * quantity)
 
     if t == "buy_one_get_one":
-        # Every pair: one free. Floor(qty/2) free items.
         free_items = quantity // 2
         return free_items * unit_price_pence
 
     if t == "three_for_two":
-        # Every 3 items: pay for 2. Floor(qty/3) free items.
         free_items = quantity // 3
         return free_items * unit_price_pence
 
     if t == "meal_deal":
-        # Handled at basket level not line level — skip here
+        # Handled at basket level in _apply_meal_deals — never at line level.
         return 0
 
     return 0
@@ -81,13 +81,16 @@ def _apply_promotion(promotion: Promotion, unit_price_pence: int, quantity: int)
 def _find_best_promotion(promotions: list, variant_id: int, department_id: int,
                           unit_price_pence: int, quantity: int):
     """
-    Find the best applicable promotion for a line and return
+    Find the best applicable per-line promotion and return
     (promotion, discount_pence) or (None, 0).
+    Meal deal promotions are explicitly excluded here — they are handled
+    at basket level by _apply_meal_deals.
     """
     applicable = []
     for p in promotions:
+        if p.promotion_type == "meal_deal":
+            continue
         variant_ids = list(p.variant_links.values_list("variant_id", flat=True))
-        # Applies if: scoped to this variant, or department-wide with no variant scope
         if variant_ids and variant_id not in variant_ids:
             continue
         if not variant_ids and p.department_id != department_id:
@@ -98,9 +101,86 @@ def _find_best_promotion(promotions: list, variant_id: int, department_id: int,
     if not applicable:
         return None, 0
 
-    # Take the promotion that gives the biggest discount
     applicable.sort(key=lambda x: x[1], reverse=True)
     return applicable[0]
+
+
+def _apply_meal_deals(promotions: list, items: list) -> tuple[int, int]:
+    """
+    Apply meal deal promotions across the basket.
+
+    A meal deal qualifies when the combined line total of its linked
+    variants meets or exceeds min_spend_pence. The discount
+    (promotion.discount_value, stored in pounds) is applied once per
+    qualifying group, spread proportionally across qualifying lines so
+    per-line tax calculation remains correct.
+
+    Items that already have a per-line promotion applied are excluded —
+    meal deals do not stack with other promotions.
+
+    Returns (extra_discount_total_pence, extra_tax_adjustment_pence).
+    """
+    meal_deals = [p for p in promotions if p.promotion_type == "meal_deal"]
+    if not meal_deals:
+        return 0, 0
+
+    extra_discount_total = 0
+    extra_tax_adjustment = 0
+
+    for deal in meal_deals:
+        deal_variant_ids = set(
+            deal.variant_links.values_list("variant_id", flat=True)
+        )
+        if not deal_variant_ids:
+            # Misconfigured meal deal with no variant scope — skip safely.
+            continue
+
+        discount_per_group_pence = _pence(deal.discount_value)
+        min_spend = deal.min_spend_pence or 0
+
+        # Exclude items that already have a per-line promotion.
+        # Use promotion_applied flag set during the per-line loop rather than
+        # checking promotion_id, which is unreliable on in-memory objects.
+        eligible = [
+            i for i in items
+            if i.variant_id in deal_variant_ids and not getattr(i, "_promotion_applied", False)
+        ]
+        if not eligible:
+            continue
+
+        group_spend = sum(i.unit_price_pence * i.quantity for i in eligible)
+        if group_spend < min_spend:
+            continue
+
+        # Group qualifies — spread discount proportionally across eligible lines.
+        for item in eligible:
+            line_value = item.unit_price_pence * item.quantity
+            proportion = Decimal(line_value) / Decimal(group_spend)
+            line_discount = int(
+                (proportion * discount_per_group_pence).to_integral_value(ROUND_HALF_UP)
+            )
+            line_discount = min(line_discount, line_value)
+
+            dept = item.variant.product.department
+            tax_rate = Decimal(str(dept.tax_rate))
+
+            old_tax = int(
+                (Decimal(item.line_total_pence) * tax_rate).to_integral_value(ROUND_HALF_UP)
+            )
+            new_line_total = item.line_total_pence - line_discount
+            new_tax = int(
+                (Decimal(new_line_total) * tax_rate).to_integral_value(ROUND_HALF_UP)
+            )
+
+            item.promotion = deal
+            item.discount_pence = (item.discount_pence or 0) + line_discount
+            item.line_total_pence = new_line_total
+            item.save(update_fields=["promotion", "discount_pence", "line_total_pence"])
+
+            extra_discount_total += line_discount
+            extra_tax_adjustment += new_tax - old_tax
+
+    return extra_discount_total, extra_tax_adjustment
 
 
 # ── Order lifecycle ───────────────────────────────────────────────────────────
@@ -133,7 +213,6 @@ def add_item(
         pk=variant_id, is_active=True
     )
 
-    # Block expired items at the point of adding to basket
     blocked = check_basket_for_expired([{
         "variant_id": variant_id,
         "department_id": variant.product.department_id,
@@ -162,7 +241,6 @@ def add_item(
         quantity=qty,
         line_total_pence=unit_price_pence * qty,
     )
-
 
     order.refresh_from_db()
     _recalculate_order_totals(order)
@@ -210,18 +288,24 @@ def confirm_order(*, order: Order) -> Order:
         line_before_discount = item.unit_price_pence * item.quantity
         line_after_discount = line_before_discount - discount_pence
 
-        # Tax calculated on discounted price
         tax_rate = Decimal(str(dept.tax_rate))
         tax_pence = int((Decimal(line_after_discount) * tax_rate).to_integral_value(ROUND_HALF_UP))
 
         item.promotion = promotion
         item.discount_pence = discount_pence
         item.line_total_pence = line_after_discount
+        # Flag used by _apply_meal_deals to detect items already promoted.
+        item._promotion_applied = promotion is not None
         item.save(update_fields=["promotion", "discount_pence", "line_total_pence"])
 
         subtotal += line_before_discount
         discount_total += discount_pence
         tax_total += tax_pence
+
+    # Apply meal deal promotions across the basket (basket-level, not per-line).
+    meal_discount, meal_tax_delta = _apply_meal_deals(promotions, items)
+    discount_total += meal_discount
+    tax_total += meal_tax_delta
 
     total = subtotal - discount_total + tax_total
 
@@ -236,8 +320,8 @@ def confirm_order(*, order: Order) -> Order:
     ])
 
     logger.info(
-        "Order #%s confirmed — subtotal=%dp discount=%dp tax=%dp total=%dp",
-        order.id, subtotal, discount_total, tax_total, total,
+        "Order #%s confirmed — subtotal=%dp discount=%dp (meal_deal=%dp) tax=%dp total=%dp",
+        order.id, subtotal, discount_total, meal_discount, tax_total, total,
     )
     return order
 
@@ -264,12 +348,10 @@ def checkout(
       5. Mark order paid
     """
     from apps.inventory.services import record_movement, check_basket_for_expired
-    from apps.inventory.models import ProductVariant
 
     if order.status != "confirmed":
         raise ValueError(f"Order #{order.id} must be confirmed before checkout. Status: '{order.status}'.")
 
-    # Validate payment
     if payment_method not in dict(Order.PAYMENT_METHOD_CHOICES):
         raise ValueError(f"Invalid payment_method '{payment_method}'.")
 
@@ -281,7 +363,6 @@ def checkout(
                 f"Cash tendered ({cash_tendered_pence}p) is less than order total ({order.total_pence}p)."
             )
 
-    # Check for age-restricted items
     items = list(order.items.select_related("variant__product__department").all())
     has_age_restricted = any(i.variant.product.is_age_restricted for i in items)
     if has_age_restricted and not age_verified:
@@ -289,7 +370,6 @@ def checkout(
             "This order contains age-restricted items. age_verified must be True."
         )
 
-    # Re-check expiry as a safety net
     basket_lines = [
         {
             "variant_id": i.variant_id,
@@ -303,7 +383,6 @@ def checkout(
         names = ", ".join(b["name"] for b in blocked)
         raise ValueError(f"Checkout blocked — expired items in basket: {names}")
 
-    # Deduct stock for each line
     for item in items:
         dept = item.variant.product.department
         record_movement(
@@ -316,15 +395,12 @@ def checkout(
             reason=f"Order #{order.id} checkout",
         )
 
-    # Calculate change for cash payments
     change_given = None
     if payment_method == "cash" and cash_tendered_pence:
         change_given = cash_tendered_pence - order.total_pence
 
-    # Loyalty points: 1 point per £1 spent
     points_earned = int(order.total_pence * float(LOYALTY_POINTS_PER_PENCE))
 
-    # Mark paid
     now = timezone.now()
     order.status = "paid"
     order.payment_method = payment_method
