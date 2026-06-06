@@ -79,7 +79,7 @@ def _apply_promotion(promotion: Promotion, unit_price_pence: int, quantity: int)
 
 
 def _find_best_promotion(promotions: list, variant_id: int, department_id: int,
-                          unit_price_pence: int, quantity: int):
+                         unit_price_pence: int, quantity: int):
     """
     Find the best applicable per-line promotion and return
     (promotion, discount_pence) or (None, 0).
