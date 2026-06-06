@@ -445,7 +445,7 @@ class ExpiryAlertView(APIView):
                 )
 
         return _ok(services.get_expiry_alerts(department_id=department_pk, days_ahead=days_ahead))
-    
+
 class LowStockAlertView(APIView):
     """
     Returns all variants in a department where current stock is at or
