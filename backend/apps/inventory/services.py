@@ -329,3 +329,214 @@ def get_expiry_alerts(department_id: int, days_ahead: int = None) -> list:
         })
 
     return alerts
+def get_low_stock_variants(department_id: int) -> list:
+    """
+    Return all active variants in a department where current ledger-derived
+    stock is at or below the variant's low_stock_threshold.
+    Only variants with track_expiry=False or track_expiry=True are included —
+    threshold of 0 means alerts are disabled for that variant.
+    """
+    from django.db.models import Sum, OuterRef, Subquery
+
+    # Aggregate stock per variant scoped to this department
+    stock_qs = (
+        InventoryLedger.objects
+        .filter(department_id=department_id, variant_id=OuterRef("pk"))
+        .values("variant_id")
+        .annotate(total=Sum("quantity"))
+        .values("total")
+    )
+
+    variants = (
+        ProductVariant.objects
+        .filter(
+            product__department_id=department_id,
+            is_active=True,
+            low_stock_threshold__gt=0,  # threshold 0 means no alert
+        )
+        .select_related("product__department")
+        .annotate(current_stock=Subquery(stock_qs))
+    )
+
+    alerts = []
+    for v in variants:
+        stock = float(v.current_stock or 0)
+        if stock <= v.low_stock_threshold:
+            alerts.append({
+                "variant_id": v.id,
+                "sku": v.sku,
+                "name": v.name,
+                "product_name": v.product.name,
+                "department_id": department_id,
+                "current_stock": stock,
+                "low_stock_threshold": v.low_stock_threshold,
+                "unit_of_measure": v.unit_of_measure,
+                "units_below_threshold": v.low_stock_threshold - stock,
+            })
+
+    return sorted(alerts, key=lambda x: x["units_below_threshold"], reverse=True)
+
+
+def get_variant_expiry_status(variant_id: int, department_id: int) -> dict:
+    """
+    Return expiry status for every batch of a variant in a department.
+    Used by the barcode scan flow to block expired items before they
+    reach the basket.
+
+    A batch is considered:
+      - 'ok'      : use_by/best_before is beyond the alert window
+      - 'warning' : within the alert window but not yet expired
+      - 'expired' : use_by or best_before date is in the past
+
+    Only batches with net stock > 0 are returned.
+    """
+    today = timezone.now().date()
+
+    try:
+        variant = ProductVariant.objects.get(pk=variant_id, is_active=True)
+    except ProductVariant.DoesNotExist:
+        raise ValueError(f"Variant {variant_id} not found or inactive.")
+
+    if not variant.track_expiry:
+        return {
+            "variant_id": variant_id,
+            "sku": variant.sku,
+            "name": variant.name,
+            "track_expiry": False,
+            "batches": [],
+            "has_expired_stock": False,
+            "has_warning_stock": False,
+        }
+
+    qs = (
+        InventoryLedger.objects
+        .filter(variant_id=variant_id, department_id=department_id)
+        .exclude(best_before_date=None, use_by_date=None)
+        .values("batch_ref", "best_before_date", "use_by_date")
+        .annotate(net_quantity=Sum("quantity"))
+        .filter(net_quantity__gt=0)
+        .order_by("use_by_date", "best_before_date")
+    )
+
+    batches = []
+    has_expired = False
+    has_warning = False
+
+    for row in qs:
+        bb = row["best_before_date"]
+        ub = row["use_by_date"]
+        earliest = min(d for d in (bb, ub) if d is not None)
+        days_remaining = (earliest - today).days
+
+        if days_remaining < 0:
+            status = "expired"
+            has_expired = True
+        elif days_remaining <= variant.expiry_alert_days:
+            status = "warning"
+            has_warning = True
+        else:
+            status = "ok"
+
+        batches.append({
+            "batch_ref": row["batch_ref"] or None,
+            "best_before_date": bb.isoformat() if bb else None,
+            "use_by_date": ub.isoformat() if ub else None,
+            "days_remaining": days_remaining,
+            "net_quantity": float(row["net_quantity"]),
+            "status": status,
+        })
+
+    return {
+        "variant_id": variant_id,
+        "sku": variant.sku,
+        "name": variant.name,
+        "track_expiry": True,
+        "batches": batches,
+        "has_expired_stock": has_expired,
+        "has_warning_stock": has_warning,
+    }
+
+
+def check_basket_for_expired(lines: list) -> list:
+    """
+    Validate a basket before checkout. Blocks any line where the specified
+    batch is expired or the variant has no non-expired stock available.
+
+    lines: [{"variant_id": int, "department_id": int, "batch_ref": str|None}, ...]
+
+    Returns a list of blocked lines with reasons. Empty list = basket is clear.
+    """
+    today = timezone.now().date()
+    blocked = []
+
+    for line in lines:
+        variant_id   = line.get("variant_id")
+        department_id = line.get("department_id")
+        batch_ref    = line.get("batch_ref") or ""
+
+        try:
+            variant = ProductVariant.objects.get(pk=variant_id, is_active=True)
+        except ProductVariant.DoesNotExist:
+            blocked.append({
+                "variant_id": variant_id,
+                "batch_ref": batch_ref or None,
+                "reason": "Variant not found or inactive.",
+                "status": "not_found",
+            })
+            continue
+
+        # If expiry tracking is off for this variant, it can always be sold
+        if not variant.track_expiry:
+            continue
+
+        # If a specific batch was provided, check only that batch
+        filters = {"variant_id": variant_id, "department_id": department_id}
+        if batch_ref:
+            filters["batch_ref"] = batch_ref
+
+        qs = (
+            InventoryLedger.objects
+            .filter(**filters)
+            .exclude(best_before_date=None, use_by_date=None)
+            .values("batch_ref", "best_before_date", "use_by_date")
+            .annotate(net_quantity=Sum("quantity"))
+            .filter(net_quantity__gt=0)
+        )
+
+        if not qs.exists():
+            # No dated stock found — if expiry tracking is on, block it
+            blocked.append({
+                "variant_id": variant_id,
+                "sku": variant.sku,
+                "name": variant.name,
+                "batch_ref": batch_ref or None,
+                "reason": "No stock with expiry date found. Cannot sell expiry-tracked item without a dated batch.",
+                "status": "no_dated_stock",
+            })
+            continue
+
+        # Check every matching batch for expiry
+        expired_batches = []
+        for row in qs:
+            bb = row["best_before_date"]
+            ub = row["use_by_date"]
+            earliest = min(d for d in (bb, ub) if d is not None)
+            if earliest < today:
+                expired_batches.append({
+                    "batch_ref": row["batch_ref"] or None,
+                    "expired_date": earliest.isoformat(),
+                    "net_quantity": float(row["net_quantity"]),
+                })
+
+        if expired_batches:
+            blocked.append({
+                "variant_id": variant_id,
+                "sku": variant.sku,
+                "name": variant.name,
+                "batch_ref": batch_ref or None,
+                "reason": "Batch is expired and cannot be sold.",
+                "status": "expired",
+                "expired_batches": expired_batches,
+            })
+
+    return blocked

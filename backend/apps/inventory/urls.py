@@ -15,6 +15,9 @@ from .views import (
     StockLevelView,
     StockLevelBulkView,
     ExpiryAlertView,
+    LowStockAlertView,
+    VariantExpiryStatusView,
+    BasketExpiryCheckView,
 )
 
 urlpatterns = [
@@ -38,6 +41,9 @@ urlpatterns = [
     path("stock/<int:variant_pk>/", StockLevelView.as_view(), name="stock-level"),
     path("stock/bulk/", StockLevelBulkView.as_view(), name="stock-level-bulk"),
 
+    # Low stock alerts (per department)
+    path("stock/alerts/<int:department_pk>/", LowStockAlertView.as_view(), name="low-stock-alerts"),
+
     # Ledger locations
     path("ledger/locations/", LedgerLocationListView.as_view(), name="ledger-location-list"),
 
@@ -45,6 +51,12 @@ urlpatterns = [
     path("ledger/", LedgerListView.as_view(), name="ledger-list"),
     path("ledger/movements/", LedgerMovementView.as_view(), name="ledger-movement"),
 
-    # Expiry alerts
+    # Expiry alerts (department-wide)
     path("ledger/expiry/<int:department_pk>/", ExpiryAlertView.as_view(), name="expiry-alerts"),
+
+    # Per-variant expiry status (used at scan time)
+    path("expiry/<int:variant_pk>/", VariantExpiryStatusView.as_view(), name="variant-expiry-status"),
+
+    # Basket expiry check (called before checkout)
+    path("expiry/basket/check/", BasketExpiryCheckView.as_view(), name="basket-expiry-check"),
 ]

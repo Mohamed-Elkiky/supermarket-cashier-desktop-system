@@ -14,17 +14,20 @@ from .models import Allergen, InventoryLedger, LedgerLocation, Product, ProductV
 from .serializers import (
     AllergenSerializer,
     AllergenWriteSerializer,
+    BasketExpiryCheckSerializer,
     BulkStockLevelRequestSerializer,
     ExpiryAlertSerializer,
     InventoryLedgerSerializer,
     LedgerLocationSerializer,
     LedgerMovementWriteSerializer,
     LineTotalSerializer,
+    LowStockAlertSerializer,
     ProductSerializer,
     ProductVariantSerializer,
     ProductVariantWriteSerializer,
     ProductWriteSerializer,
     StockLevelSerializer,
+    VariantExpiryStatusSerializer,
 )
 
 logger = logging.getLogger("apps.inventory")
@@ -442,3 +445,99 @@ class ExpiryAlertView(APIView):
                 )
 
         return _ok(services.get_expiry_alerts(department_id=department_pk, days_ahead=days_ahead))
+    
+class LowStockAlertView(APIView):
+    """
+    Returns all variants in a department where current stock is at or
+    below their configured low_stock_threshold. Sorted by most critical first.
+    Variants with threshold=0 are excluded (alerts disabled).
+    """
+    permission_classes = [IsDepartmentManager]
+
+    @extend_schema(
+        summary="Low stock alerts",
+        description=(
+            "Returns variants at or below their low_stock_threshold, "
+            "sorted by how far below threshold they are. "
+            "Variants with threshold=0 are excluded."
+        ),
+        responses={200: LowStockAlertSerializer(many=True)},
+        tags=["Inventory"],
+    )
+    def get(self, request, department_pk):
+        from apps.departments.models import Department
+        get_object_or_404(Department, pk=department_pk)
+        alerts = services.get_low_stock_variants(department_id=department_pk)
+        return _ok(alerts)
+
+
+class VariantExpiryStatusView(APIView):
+    """
+    Expiry status for every batch of a variant in a department.
+    Called during barcode scan to block expired items before basket entry.
+    """
+    permission_classes = [IsCashier]
+
+    @extend_schema(
+        summary="Variant expiry status",
+        description=(
+            "Returns per-batch expiry status for a variant. "
+            "has_expired_stock=true means at least one batch is expired — "
+            "the POS must block this variant from being added to the basket."
+        ),
+        parameters=[
+            OpenApiParameter("department", OpenApiTypes.INT, required=True, description="Department ID"),
+        ],
+        responses={200: VariantExpiryStatusSerializer},
+        tags=["Inventory"],
+    )
+    def get(self, request, variant_pk):
+        dept_id = request.query_params.get("department")
+        if not dept_id:
+            return Response(
+                {"success": False, "error": {"code": "ValidationError", "errors": ["'department' query parameter is required."]}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            data = services.get_variant_expiry_status(
+                variant_id=variant_pk, department_id=int(dept_id)
+            )
+        except ValueError as exc:
+            return Response(
+                {"success": False, "error": {"code": "NotFound", "errors": [str(exc)]}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return _ok(data)
+
+
+class BasketExpiryCheckView(APIView):
+    """
+    POST the basket lines before checkout. Returns any blocked lines.
+    Empty blocked list = basket is clear to proceed.
+    The POS calls this before confirming payment.
+    """
+    permission_classes = [IsCashier]
+
+    @extend_schema(
+        summary="Basket expiry check",
+        description=(
+            "Validates all basket lines for expiry before checkout. "
+            "Returns blocked lines with reasons. "
+            "Empty list means the basket is clear."
+        ),
+        request=BasketExpiryCheckSerializer,
+        responses={
+            200: OpenApiResponse(description="Validation result — check 'blocked' list"),
+        },
+        tags=["Inventory"],
+    )
+    def post(self, request):
+        serializer = BasketExpiryCheckSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        lines = serializer.validated_data["lines"]
+        blocked = services.check_basket_for_expired(lines)
+        return _ok({
+            "basket_clear": len(blocked) == 0,
+            "blocked_count": len(blocked),
+            "blocked": blocked,
+        })

@@ -270,3 +270,43 @@ class ExpiryAlertSerializer(serializers.Serializer):
     days_remaining   = serializers.IntegerField()
     net_quantity     = serializers.FloatField()
     is_expired       = serializers.BooleanField()
+
+class LowStockAlertSerializer(serializers.Serializer):
+    variant_id          = serializers.IntegerField()
+    sku                 = serializers.CharField()
+    name                = serializers.CharField()
+    product_name        = serializers.CharField()
+    department_id       = serializers.IntegerField()
+    current_stock       = serializers.FloatField()
+    low_stock_threshold = serializers.IntegerField()
+    unit_of_measure     = serializers.CharField()
+    units_below_threshold = serializers.FloatField()
+
+
+class BatchExpiryStatusSerializer(serializers.Serializer):
+    batch_ref        = serializers.CharField(allow_null=True)
+    best_before_date = serializers.CharField(allow_null=True)
+    use_by_date      = serializers.CharField(allow_null=True)
+    days_remaining   = serializers.IntegerField()
+    net_quantity     = serializers.FloatField()
+    status           = serializers.ChoiceField(choices=["ok", "warning", "expired"])
+
+
+class VariantExpiryStatusSerializer(serializers.Serializer):
+    variant_id        = serializers.IntegerField()
+    sku               = serializers.CharField()
+    name              = serializers.CharField()
+    track_expiry      = serializers.BooleanField()
+    batches           = BatchExpiryStatusSerializer(many=True)
+    has_expired_stock = serializers.BooleanField()
+    has_warning_stock = serializers.BooleanField()
+
+
+class BasketLineSerializer(serializers.Serializer):
+    variant_id    = serializers.IntegerField()
+    department_id = serializers.IntegerField()
+    batch_ref     = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class BasketExpiryCheckSerializer(serializers.Serializer):
+    lines = serializers.ListField(child=BasketLineSerializer(), min_length=1)
