@@ -189,6 +189,11 @@ class OrderCheckoutView(ActivityLogMixin, APIView):
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
 
+        customer = None
+        if d.get("customer_id"):
+            from apps.loyalty.models import Customer
+            customer = get_object_or_404(Customer, pk=d["customer_id"])
+
         try:
             order = services.checkout(
                 order=order,
@@ -196,6 +201,7 @@ class OrderCheckoutView(ActivityLogMixin, APIView):
                 cash_tendered_pence=d.get("cash_tendered_pence"),
                 age_verified=d.get("age_verified", False),
                 age_verification_id_type=d.get("age_verification_id_type", ""),
+                customer=customer,
             )
         except ValueError as exc:
             return Response(

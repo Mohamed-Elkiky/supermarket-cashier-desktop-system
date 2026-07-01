@@ -170,6 +170,8 @@ class CheckoutSerializer(serializers.Serializer):
     cash_tendered_pence     = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     age_verified            = serializers.BooleanField(default=False)
     age_verification_id_type = serializers.CharField(required=False, allow_blank=True, default="")
+    # Optional loyalty customer for this checkout — omit for a guest sale (no points earned).
+    customer_id             = serializers.IntegerField(required=False, allow_null=True, default=None)
 
 
 class VoidSerializer(serializers.Serializer):

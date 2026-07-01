@@ -10,9 +10,6 @@ from .models import Order, OrderItem, Promotion, PromotionVariant
 
 logger = logging.getLogger("apps.pos")
 
-# 1 loyalty point per £1 spent
-LOYALTY_POINTS_PER_PENCE = Decimal("0.01")
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -334,6 +331,7 @@ def checkout(
     cash_tendered_pence: int = None,
     age_verified: bool = False,
     age_verification_id_type: str = "",
+    customer=None,
 ) -> Order:
     """
     Complete payment and deduct stock. All-or-nothing — runs inside a
@@ -344,8 +342,14 @@ def checkout(
       1. Validate order is confirmed and payment details are correct
       2. Re-check all items for expiry (safety net in case time passed)
       3. Deduct stock via ledger record_movement() for each line
-      4. Generate receipt number
-      5. Mark order paid
+      4. Award loyalty points if a customer is attached to this checkout
+      5. Generate receipt number
+      6. Mark order paid
+
+    customer: an apps.loyalty.models.Customer, or None for a guest checkout
+    (no points are earned). Passed in per-call rather than stored on Order —
+    the link to the earning order is recorded on the LoyaltyTransaction
+    itself (LoyaltyTransaction.order), so no schema change to Order is needed.
     """
     from apps.inventory.services import record_movement, check_basket_for_expired
 
@@ -399,7 +403,15 @@ def checkout(
     if payment_method == "cash" and cash_tendered_pence:
         change_given = cash_tendered_pence - order.total_pence
 
-    points_earned = int(order.total_pence * float(LOYALTY_POINTS_PER_PENCE))
+    points_earned = 0
+    if customer is not None:
+        from apps.loyalty.services import award_points
+
+        loyalty_account = getattr(customer, "loyalty_account", None)
+        if loyalty_account is None:
+            raise ValueError(f"Customer #{customer.id} has no loyalty account.")
+        loyalty_txn = award_points(loyalty_account=loyalty_account, order=order)
+        points_earned = loyalty_txn.points
 
     now = timezone.now()
     order.status = "paid"

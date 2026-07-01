@@ -11,6 +11,8 @@ from apps.departments.models import Department
 from apps.inventory.services import create_product, create_variant
 from apps.staff.models import Staff
 
+from apps.loyalty.models import LoyaltyAccount
+from apps.loyalty.services import create_customer
 from apps.pos.models import Order, Promotion, PromotionVariant
 from apps.pos.services import (
     _apply_meal_deals,
@@ -18,6 +20,7 @@ from apps.pos.services import (
     _find_best_promotion,
     _get_active_promotions,
     add_item,
+    checkout,
     confirm_order,
     create_order,
 )
@@ -476,3 +479,53 @@ class TestPromotionAPI:
         )
         assert response.status_code == 201, response.data
         assert sorted(response.data["data"]["variant_ids"]) == sorted([sandwich_variant.id, drink_variant.id])
+
+
+# ── checkout() + loyalty integration ──────────────────────────────────────────
+# checkout() used to award a flat 1% of order.total_pence regardless of
+# customer. It now delegates to apps.loyalty.services.award_points(), which
+# is tier-aware, and only runs at all when a customer is passed in (guest
+# checkouts earn nothing — previously every checkout earned flat points).
+
+class TestCheckoutLoyaltyIntegration:
+    def _confirmed_order(self, grocery_variant, quantity=1):
+        order = create_order()
+        add_item(order=order, variant_id=grocery_variant.id, quantity=quantity)
+        return confirm_order(order=order)
+
+    def test_guest_checkout_earns_no_points(self, grocery_variant):
+        order = self._confirmed_order(grocery_variant)
+        order = checkout(order=order, payment_method="card")
+        assert order.loyalty_points_earned == 0
+
+    def test_customer_checkout_earns_bronze_rate_points(self, grocery_variant):
+        customer = create_customer(first_name="Jane", last_name="Doe", email="jane@test.com")
+        order = self._confirmed_order(grocery_variant)
+        # £10.00 item + 20% dept tax = 1200p total; bronze = 1 point per £1
+        order = checkout(order=order, payment_method="card", customer=customer)
+        assert order.loyalty_points_earned == 12
+
+        customer.loyalty_account.refresh_from_db()
+        assert customer.loyalty_account.points_balance == 12
+        assert customer.loyalty_account.lifetime_spend_pence == 1200
+
+    def test_silver_customer_earns_at_higher_rate(self, grocery_variant):
+        customer = create_customer(first_name="Sam", last_name="Silver", email="sam.silver@test.com")
+        customer.loyalty_account.tier = LoyaltyAccount.Tier.SILVER
+        customer.loyalty_account.lifetime_spend_pence = 50_000  # already at the £500 silver threshold
+        customer.loyalty_account.save()
+
+        order = self._confirmed_order(grocery_variant)
+        order = checkout(order=order, payment_method="card", customer=customer)
+        # 1200p total * 1% * 1.25 silver multiplier = 15 points
+        assert order.loyalty_points_earned == 15
+
+    def test_loyalty_transaction_links_back_to_order(self, grocery_variant):
+        customer = create_customer(first_name="Tia", last_name="Transaction", email="tia@test.com")
+        order = self._confirmed_order(grocery_variant)
+        order = checkout(order=order, payment_method="card", customer=customer)
+
+        txn = customer.loyalty_account.transactions.get()
+        assert txn.order_id == order.id
+        assert txn.transaction_type == "earn"
+        assert txn.points == order.loyalty_points_earned
