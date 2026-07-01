@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    AllergenAuditExportView,
     AllergenListView,
     BarcodeLookupView,
     ProductListCreateView,
@@ -23,6 +24,7 @@ from .views import (
 urlpatterns = [
     # Allergens
     path("allergens/", AllergenListView.as_view(), name="allergen-list"),
+    path("allergens/audit-export/", AllergenAuditExportView.as_view(), name="allergen-audit-export"),
 
     # Barcode scanner
     path("barcode/", BarcodeLookupView.as_view(), name="barcode-lookup"),

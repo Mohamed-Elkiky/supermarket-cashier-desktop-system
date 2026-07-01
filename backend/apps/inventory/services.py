@@ -1,7 +1,7 @@
 import logging
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Sum
 from django.utils import timezone
 
@@ -567,3 +567,62 @@ def check_basket_for_expired(lines: list) -> list:
             })
 
     return blocked
+
+
+# ── Allergen audit ────────────────────────────────────────────────────────────
+
+def _variant_ids_with_allergen_updates_since(since) -> set:
+    """
+    Derives which variants had their allergen profile changed on/after `since`
+    from activity_log (written by ProductVariantAllergenView.put() via
+    log_activity() for the 'variant.allergens.set' action) — avoids adding a
+    new updated_at column to ProductVariantAllergen.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT DISTINCT entity_id FROM activity_log
+            WHERE entity_type = %s AND action = %s AND occurred_at >= %s
+            """,
+            ["product_variants", "variant.allergens.set", since.isoformat()],
+        )
+        return {int(row[0]) for row in cursor.fetchall()}
+
+
+def get_allergen_audit_export(*, department_id: int = None, updated_since=None) -> list:
+    """
+    Full allergen profile for every active variant: SKU, product name,
+    department, and contains/may_contain/absent for each configured allergen.
+    """
+    qs = (
+        ProductVariant.objects
+        .filter(is_active=True)
+        .select_related("product__department")
+        .prefetch_related("allergen_links__allergen")
+    )
+    if department_id:
+        qs = qs.filter(product__department_id=department_id)
+    if updated_since is not None:
+        variant_ids = _variant_ids_with_allergen_updates_since(updated_since)
+        qs = qs.filter(pk__in=variant_ids)
+
+    allergens = list(Allergen.objects.order_by("eu_code"))
+
+    rows = []
+    for variant in qs:
+        links = {link.allergen_id: link.may_contain for link in variant.allergen_links.all()}
+        row = {
+            "sku": variant.sku,
+            "product_name": variant.product.name,
+            "department": variant.product.department.name,
+        }
+        for allergen in allergens:
+            if allergen.id not in links:
+                row[allergen.eu_code] = "absent"
+            elif links[allergen.id]:
+                row[allergen.eu_code] = "may_contain"
+            else:
+                row[allergen.eu_code] = "contains"
+        rows.append(row)
+
+    return rows

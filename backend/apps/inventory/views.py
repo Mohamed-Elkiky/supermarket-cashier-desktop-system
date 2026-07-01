@@ -1,6 +1,10 @@
 import logging
+from datetime import datetime, time
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
 from rest_framework import status
@@ -41,6 +45,25 @@ def _created(data):
     return _ok(data, status.HTTP_201_CREATED)
 
 
+def _allergen_filter_q(request, *, prefix=""):
+    """
+    Builds a Q object for ?allergen=CODE1,CODE2 (OR semantics) with optional
+    ?exclude_may_contain=true, scoped to the given relation prefix so the
+    same helper works for Product (prefix="variants__allergen_links__") and
+    ProductVariant (prefix="allergen_links__") querysets. Returns None when
+    no ?allergen filter was requested.
+    """
+    allergen_param = request.query_params.get("allergen")
+    if not allergen_param:
+        return None
+
+    codes = [c.strip() for c in allergen_param.split(",") if c.strip()]
+    q = Q(**{f"{prefix}allergen__eu_code__in": codes})
+    if request.query_params.get("exclude_may_contain", "").lower() == "true":
+        q &= Q(**{f"{prefix}may_contain": False})
+    return q
+
+
 # ── Allergens ─────────────────────────────────────────────────────────────────
 
 class AllergenListView(APIView):
@@ -49,6 +72,47 @@ class AllergenListView(APIView):
     @extend_schema(summary="List all allergens", responses={200: AllergenSerializer(many=True)}, tags=["Inventory"])
     def get(self, request):
         return _ok(AllergenSerializer(Allergen.objects.all(), many=True).data)
+
+
+class AllergenAuditExportView(APIView):
+    permission_classes = [IsDepartmentManager]
+
+    @extend_schema(
+        summary="Allergen audit export",
+        description=(
+            "Full allergen profile for every active variant — SKU, product name, "
+            "department, and contains/may_contain/absent for each configured allergen. "
+            "Filter with ?department=<id> and/or ?updated_since=<YYYY-MM-DD> (derived from "
+            "activity_log 'variant.allergens.set' events)."
+        ),
+        parameters=[
+            OpenApiParameter("department", OpenApiTypes.INT, description="Filter by department ID"),
+            OpenApiParameter("updated_since", OpenApiTypes.DATE,
+                              description="Only variants whose allergen profile changed on/after this date"),
+        ],
+        responses={200: OpenApiResponse(description="Flat list of variant allergen rows")},
+        tags=["Inventory"],
+    )
+    def get(self, request):
+        department_id = request.query_params.get("department")
+
+        updated_since = None
+        raw_since = request.query_params.get("updated_since")
+        if raw_since:
+            parsed_date = parse_date(raw_since)
+            if not parsed_date:
+                return Response(
+                    {"success": False, "error": {"code": "ValidationError",
+                                                  "errors": ["'updated_since' must be an ISO date (YYYY-MM-DD)."]}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            updated_since = timezone.make_aware(datetime.combine(parsed_date, time.min))
+
+        data = services.get_allergen_audit_export(
+            department_id=int(department_id) if department_id else None,
+            updated_since=updated_since,
+        )
+        return _ok(data)
 
 
 # ── Products ──────────────────────────────────────────────────────────────────
@@ -65,6 +129,10 @@ class ProductListCreateView(ActivityLogMixin, APIView):
         parameters=[
             OpenApiParameter("department", OpenApiTypes.INT, description="Filter by department ID"),
             OpenApiParameter("active", OpenApiTypes.BOOL, description="Include only active (default: true)"),
+            OpenApiParameter("allergen", OpenApiTypes.STR,
+                              description="Filter by allergen EU code(s), comma-separated for OR (e.g. MLK,EGG)"),
+            OpenApiParameter("exclude_may_contain", OpenApiTypes.BOOL,
+                              description="With ?allergen=, only match variants that definitely contain it"),
         ],
         responses={200: ProductSerializer(many=True)},
         tags=["Inventory"],
@@ -77,6 +145,8 @@ class ProductListCreateView(ActivityLogMixin, APIView):
             qs = qs.filter(department_id=dept)
         if request.query_params.get("active", "true").lower() != "false":
             qs = qs.filter(is_active=True)
+        if allergen_q := _allergen_filter_q(request, prefix="variants__allergen_links__"):
+            qs = qs.filter(allergen_q).distinct()
         return _ok(ProductSerializer(qs, many=True).data)
 
     @extend_schema(summary="Create product", request=ProductWriteSerializer, responses={201: ProductSerializer}, tags=["Inventory"])
@@ -133,12 +203,23 @@ class ProductVariantListCreateView(ActivityLogMixin, APIView):
             return [IsDepartmentManager()]
         return [IsCashier()]
 
-    @extend_schema(summary="List variants", responses={200: ProductVariantSerializer(many=True)}, tags=["Inventory"])
+    @extend_schema(
+        summary="List variants",
+        parameters=[
+            OpenApiParameter("allergen", OpenApiTypes.STR,
+                              description="Filter by allergen EU code(s), comma-separated for OR (e.g. MLK,EGG)"),
+            OpenApiParameter("exclude_may_contain", OpenApiTypes.BOOL,
+                              description="With ?allergen=, only match variants that definitely contain it"),
+        ],
+        responses={200: ProductVariantSerializer(many=True)},
+        tags=["Inventory"],
+    )
     def get(self, request, pk):
         product = get_object_or_404(Product, pk=pk)
-        return _ok(ProductVariantSerializer(
-            product.variants.prefetch_related("allergen_links__allergen"), many=True
-        ).data)
+        variants = product.variants.prefetch_related("allergen_links__allergen")
+        if allergen_q := _allergen_filter_q(request, prefix="allergen_links__"):
+            variants = variants.filter(allergen_q).distinct()
+        return _ok(ProductVariantSerializer(variants, many=True).data)
 
     @extend_schema(summary="Create variant", request=ProductVariantWriteSerializer, responses={201: ProductVariantSerializer}, tags=["Inventory"])
     def post(self, request, pk):

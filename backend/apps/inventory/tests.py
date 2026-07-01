@@ -1,8 +1,11 @@
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.departments.models import Department
@@ -806,3 +809,255 @@ class TestBarcodeLookupAPI:
         response = cashier_client.get(reverse("barcode-lookup") + f"?barcode={fixed_variant.barcode}")
         assert response.status_code == 200
         assert len(response.data["data"]["allergens"]) == 1
+
+
+# ── Allergen filtering fixtures ───────────────────────────────────────────────
+
+@pytest.fixture
+def product_gluten(dept, allergen_gluten):
+    p = create_product(department=dept, name="White Bread")
+    v = create_variant(
+        product=p, sku="BREAD-001", name="White Bread Loaf",
+        pricing_mode="fixed", sell_price=Decimal("1.00"), cost_price=Decimal("0.40"),
+    )
+    set_variant_allergens(v, [{"allergen_id": allergen_gluten.id, "may_contain": False}])
+    return p
+
+
+@pytest.fixture
+def product_nuts_trace(dept, allergen_nuts):
+    p = create_product(department=dept, name="Choc Cookie")
+    v = create_variant(
+        product=p, sku="COOKIE-001", name="Choc Cookie Pack",
+        pricing_mode="fixed", sell_price=Decimal("2.00"), cost_price=Decimal("0.80"),
+    )
+    set_variant_allergens(v, [{"allergen_id": allergen_nuts.id, "may_contain": True}])
+    return p
+
+
+@pytest.fixture
+def product_plain(dept):
+    p = create_product(department=dept, name="Still Water")
+    create_variant(
+        product=p, sku="WATER-001", name="Still Water 500ml",
+        pricing_mode="fixed", sell_price=Decimal("0.80"), cost_price=Decimal("0.20"),
+    )
+    return p
+
+
+@pytest.fixture
+def product_multi(dept):
+    return create_product(department=dept, name="Deli Selection")
+
+
+@pytest.fixture
+def variant_gluten(product_multi, allergen_gluten):
+    v = create_variant(
+        product=product_multi, sku="DELI-BREAD", name="Deli Bread",
+        pricing_mode="fixed", sell_price=Decimal("1.50"), cost_price=Decimal("0.60"),
+    )
+    set_variant_allergens(v, [{"allergen_id": allergen_gluten.id, "may_contain": False}])
+    return v
+
+
+@pytest.fixture
+def variant_nuts_trace(product_multi, allergen_nuts):
+    v = create_variant(
+        product=product_multi, sku="DELI-COOKIE", name="Deli Cookie",
+        pricing_mode="fixed", sell_price=Decimal("2.50"), cost_price=Decimal("1.00"),
+    )
+    set_variant_allergens(v, [{"allergen_id": allergen_nuts.id, "may_contain": True}])
+    return v
+
+
+@pytest.fixture
+def variant_plain(product_multi):
+    return create_variant(
+        product=product_multi, sku="DELI-WATER", name="Deli Water",
+        pricing_mode="fixed", sell_price=Decimal("0.90"), cost_price=Decimal("0.30"),
+    )
+
+
+# ── Product allergen filter API ───────────────────────────────────────────────
+
+class TestProductAllergenFilterAPI:
+    def test_filter_by_single_allergen(self, cashier_client, product_gluten, product_nuts_trace, product_plain):
+        response = cashier_client.get(reverse("product-list-create"), {"allergen": "GL"})
+        assert response.status_code == 200
+        names = {p["name"] for p in response.data["data"]}
+        assert names == {product_gluten.name}
+
+    def test_filter_by_multiple_allergens_or(self, cashier_client, product_gluten, product_nuts_trace, product_plain):
+        response = cashier_client.get(reverse("product-list-create"), {"allergen": "GL,TN"})
+        assert response.status_code == 200
+        names = {p["name"] for p in response.data["data"]}
+        assert names == {product_gluten.name, product_nuts_trace.name}
+
+    def test_exclude_may_contain(self, cashier_client, product_gluten, product_nuts_trace, product_plain):
+        # product_nuts_trace only carries a "may_contain" nuts link, so it drops out
+        response = cashier_client.get(
+            reverse("product-list-create"), {"allergen": "GL,TN", "exclude_may_contain": "true"}
+        )
+        assert response.status_code == 200
+        names = {p["name"] for p in response.data["data"]}
+        assert names == {product_gluten.name}
+
+    def test_no_allergen_param_returns_all(self, cashier_client, product_gluten, product_nuts_trace, product_plain):
+        response = cashier_client.get(reverse("product-list-create"))
+        assert response.status_code == 200
+        names = {p["name"] for p in response.data["data"]}
+        assert names == {product_gluten.name, product_nuts_trace.name, product_plain.name}
+
+
+# ── Variant allergen filter API ───────────────────────────────────────────────
+
+class TestVariantAllergenFilterAPI:
+    def test_filter_by_single_allergen(
+        self, cashier_client, product_multi, variant_gluten, variant_nuts_trace, variant_plain
+    ):
+        response = cashier_client.get(
+            reverse("variant-list-create", kwargs={"pk": product_multi.pk}), {"allergen": "GL"}
+        )
+        assert response.status_code == 200
+        skus = {v["sku"] for v in response.data["data"]}
+        assert skus == {variant_gluten.sku}
+
+    def test_filter_by_multiple_allergens_or(
+        self, cashier_client, product_multi, variant_gluten, variant_nuts_trace, variant_plain
+    ):
+        response = cashier_client.get(
+            reverse("variant-list-create", kwargs={"pk": product_multi.pk}), {"allergen": "GL,TN"}
+        )
+        assert response.status_code == 200
+        skus = {v["sku"] for v in response.data["data"]}
+        assert skus == {variant_gluten.sku, variant_nuts_trace.sku}
+
+    def test_exclude_may_contain(
+        self, cashier_client, product_multi, variant_gluten, variant_nuts_trace, variant_plain
+    ):
+        response = cashier_client.get(
+            reverse("variant-list-create", kwargs={"pk": product_multi.pk}),
+            {"allergen": "GL,TN", "exclude_may_contain": "true"},
+        )
+        assert response.status_code == 200
+        skus = {v["sku"] for v in response.data["data"]}
+        assert skus == {variant_gluten.sku}
+
+
+# ── Allergen audit export API ─────────────────────────────────────────────────
+
+@pytest.fixture
+def activity_log_table(db):
+    """
+    activity_log is written via raw SQL in apps.core.activity.log_activity()
+    and has no Django model/migration of its own. Create it here so the
+    updated_since filter (which reads it) is testable; the transaction wrapping
+    each test rolls it back afterwards.
+    """
+    with connection.cursor() as cursor:
+        if connection.vendor == "postgresql":
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS activity_log (
+                    id BIGSERIAL PRIMARY KEY,
+                    entity_type VARCHAR(100) NOT NULL,
+                    entity_id VARCHAR(50) NOT NULL,
+                    action VARCHAR(100) NOT NULL,
+                    occurred_at TIMESTAMPTZ NOT NULL
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS activity_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type VARCHAR(100) NOT NULL,
+                    entity_id VARCHAR(50) NOT NULL,
+                    action VARCHAR(100) NOT NULL,
+                    occurred_at TIMESTAMP NOT NULL
+                )
+            """)
+    yield
+    with connection.cursor() as cursor:
+        cursor.execute("DROP TABLE IF EXISTS activity_log")
+
+
+def _log_allergen_change(variant_id, occurred_at):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO activity_log (entity_type, entity_id, action, occurred_at) VALUES (%s, %s, %s, %s)",
+            ["product_variants", str(variant_id), "variant.allergens.set", occurred_at.isoformat()],
+        )
+
+
+class TestAllergenAuditExportAPI:
+    def test_cashier_forbidden(self, cashier_client):
+        response = cashier_client.get(reverse("allergen-audit-export"))
+        assert response.status_code == 403
+
+    def test_unauthenticated_denied(self, anon_client):
+        response = anon_client.get(reverse("allergen-audit-export"))
+        assert response.status_code == 401
+
+    def test_manager_can_export_shape(self, manager_client, fixed_variant, allergen_gluten, allergen_nuts):
+        set_variant_allergens(fixed_variant, [
+            {"allergen_id": allergen_gluten.id, "may_contain": False},
+            {"allergen_id": allergen_nuts.id, "may_contain": True},
+        ])
+        response = manager_client.get(reverse("allergen-audit-export"))
+        assert response.status_code == 200
+        rows = response.data["data"]
+        row = next(r for r in rows if r["sku"] == fixed_variant.sku)
+        assert row["product_name"] == fixed_variant.product.name
+        assert row["department"] == fixed_variant.product.department.name
+        assert row[allergen_gluten.eu_code] == "contains"
+        assert row[allergen_nuts.eu_code] == "may_contain"
+
+    def test_absent_when_no_link(self, manager_client, fixed_variant, allergen_gluten):
+        response = manager_client.get(reverse("allergen-audit-export"))
+        assert response.status_code == 200
+        row = next(r for r in response.data["data"] if r["sku"] == fixed_variant.sku)
+        assert row[allergen_gluten.eu_code] == "absent"
+
+    def test_department_filter(self, manager_client, dept, fixed_variant):
+        other_dept = Department.objects.create(name="Frozen", slug="frozen-audit-test", display_order=3)
+        other_product = create_product(department=other_dept, name="Ice Cream")
+        other_variant = create_variant(
+            product=other_product, sku="ICE-001", name="Vanilla Ice Cream",
+            pricing_mode="fixed", sell_price=Decimal("3.00"), cost_price=Decimal("1.50"),
+        )
+        response = manager_client.get(reverse("allergen-audit-export"), {"department": dept.id})
+        assert response.status_code == 200
+        skus = {r["sku"] for r in response.data["data"]}
+        assert fixed_variant.sku in skus
+        assert other_variant.sku not in skus
+
+    def test_inactive_variant_excluded(self, manager_client, fixed_variant):
+        fixed_variant.is_active = False
+        fixed_variant.save()
+        response = manager_client.get(reverse("allergen-audit-export"))
+        assert response.status_code == 200
+        skus = {r["sku"] for r in response.data["data"]}
+        assert fixed_variant.sku not in skus
+
+    def test_invalid_updated_since_returns_400(self, manager_client):
+        response = manager_client.get(reverse("allergen-audit-export"), {"updated_since": "not-a-date"})
+        assert response.status_code == 400
+
+    def test_updated_since_filters_by_activity_log(self, manager_client, activity_log_table, product):
+        recent_variant = create_variant(
+            product=product, sku="RECENT-001", name="Recently Updated Item",
+            pricing_mode="fixed", sell_price=Decimal("1.00"), cost_price=Decimal("0.50"),
+        )
+        stale_variant = create_variant(
+            product=product, sku="STALE-001", name="Stale Item",
+            pricing_mode="fixed", sell_price=Decimal("1.00"), cost_price=Decimal("0.50"),
+        )
+        now = timezone.now()
+        _log_allergen_change(recent_variant.id, now)
+        _log_allergen_change(stale_variant.id, now - timedelta(days=30))
+
+        cutoff = (now - timedelta(days=1)).date().isoformat()
+        response = manager_client.get(reverse("allergen-audit-export"), {"updated_since": cutoff})
+        assert response.status_code == 200
+        skus = {r["sku"] for r in response.data["data"]}
+        assert recent_variant.sku in skus
+        assert stale_variant.sku not in skus

@@ -12,7 +12,7 @@ SQLI_PATTERNS = [
     r"\w*((\%27)|(\'))((\%6F)|o|(\%4F))((\%72)|r|(\%52))",
     r"((\%27)|(\'))union",
     r"exec(\s|\+)+(s|x)p\w+",
-    r"insert|update|delete|drop|create|alter|truncate",
+    r"\b(insert|update|delete|drop|create|alter|truncate)\b",
 ]
 
 SQLI_REGEX = re.compile("|".join(SQLI_PATTERNS), re.IGNORECASE)
