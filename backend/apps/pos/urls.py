@@ -9,6 +9,9 @@ from .views import (
     OrderCheckoutView,
     OrderReceiptView,
     OrderVoidView,
+    PromotionListCreateView,
+    PromotionDetailView,
+    PromotionDeactivateView,
 )
 
 urlpatterns = [
@@ -20,4 +23,7 @@ urlpatterns = [
     path("orders/<int:pk>/checkout/",            OrderCheckoutView.as_view(),  name="order-checkout"),
     path("orders/<int:pk>/receipt/",             OrderReceiptView.as_view(),   name="order-receipt"),
     path("orders/<int:pk>/void/",                OrderVoidView.as_view(),      name="order-void"),
+    path("promotions/",                          PromotionListCreateView.as_view(), name="promotion-list-create"),
+    path("promotions/<int:pk>/",                 PromotionDetailView.as_view(),     name="promotion-detail"),
+    path("promotions/<int:pk>/deactivate/",      PromotionDeactivateView.as_view(), name="promotion-deactivate"),
 ]

@@ -9,11 +9,12 @@ from rest_framework.views import APIView
 from apps.accounts.permissions import IsCashier, IsDepartmentManager
 from apps.core.mixins import ActivityLogMixin
 from . import services
-from .models import Order
+from .models import Order, Promotion
 from .serializers import (
     AddItemSerializer,
     CheckoutSerializer,
     OrderSerializer,
+    PromotionSerializer,
     VoidSerializer,
 )
 
@@ -34,6 +35,13 @@ def _get_order(pk):
             "items__variant__product__department",
             "items__promotion",
         ).select_related("cashier"),
+        pk=pk,
+    )
+
+
+def _get_promotion(pk):
+    return get_object_or_404(
+        Promotion.objects.select_related("department").prefetch_related("variant_links"),
         pk=pk,
     )
 
@@ -253,3 +261,112 @@ class OrderVoidView(ActivityLogMixin, APIView):
         self.log(request, "order.void", "orders", order.id,
                  after_state={"reason": serializer.validated_data.get("reason", "")})
         return _ok(OrderSerializer(order).data)
+
+
+class PromotionListCreateView(ActivityLogMixin, APIView):
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsDepartmentManager()]
+        return [IsCashier()]
+
+    @extend_schema(
+        summary="List promotions",
+        description="Filter with ?is_active=&department=&promotion_type= query params.",
+        responses={200: PromotionSerializer(many=True)},
+        tags=["POS"],
+    )
+    def get(self, request):
+        qs = Promotion.objects.select_related("department").prefetch_related("variant_links")
+
+        is_active = request.query_params.get("is_active")
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() in ("1", "true", "yes"))
+
+        department = request.query_params.get("department")
+        if department:
+            qs = qs.filter(department_id=department)
+
+        promotion_type = request.query_params.get("promotion_type")
+        if promotion_type:
+            qs = qs.filter(promotion_type=promotion_type)
+
+        return _ok(PromotionSerializer(qs, many=True).data)
+
+    @extend_schema(
+        summary="Create promotion",
+        request=PromotionSerializer,
+        responses={201: PromotionSerializer, 400: OpenApiResponse(description="Validation error")},
+        tags=["POS"],
+    )
+    def post(self, request):
+        serializer = PromotionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        performed_by = None
+        try:
+            performed_by = request.user.staff_profile
+        except Exception:
+            pass
+
+        promotion = serializer.save(created_by=performed_by)
+        self.log(request, "promotion.create", "promotions", promotion.id,
+                 after_state={
+                     "name": promotion.name,
+                     "promotion_type": promotion.promotion_type,
+                     "discount_value": str(promotion.discount_value),
+                 })
+        return _created(PromotionSerializer(_get_promotion(promotion.id)).data)
+
+
+class PromotionDetailView(ActivityLogMixin, APIView):
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsCashier()]
+        return [IsDepartmentManager()]
+
+    @extend_schema(summary="Retrieve promotion", responses={200: PromotionSerializer}, tags=["POS"])
+    def get(self, request, pk):
+        return _ok(PromotionSerializer(_get_promotion(pk)).data)
+
+    @extend_schema(
+        summary="Update promotion",
+        request=PromotionSerializer,
+        responses={200: PromotionSerializer, 400: OpenApiResponse(description="Validation error")},
+        tags=["POS"],
+    )
+    def patch(self, request, pk):
+        promotion = _get_promotion(pk)
+        before = {
+            "name": promotion.name,
+            "discount_value": str(promotion.discount_value),
+            "is_active": promotion.is_active,
+        }
+        serializer = PromotionSerializer(promotion, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        promotion = serializer.save()
+        self.log(request, "promotion.update", "promotions", promotion.id,
+                 before_state=before,
+                 after_state={
+                     "name": promotion.name,
+                     "discount_value": str(promotion.discount_value),
+                     "is_active": promotion.is_active,
+                 })
+        return _ok(PromotionSerializer(_get_promotion(promotion.id)).data)
+
+
+class PromotionDeactivateView(ActivityLogMixin, APIView):
+    permission_classes = [IsDepartmentManager]
+
+    @extend_schema(
+        summary="Deactivate promotion",
+        responses={200: PromotionSerializer},
+        tags=["POS"],
+    )
+    def post(self, request, pk):
+        promotion = _get_promotion(pk)
+        before_active = promotion.is_active
+        promotion = services.deactivate_promotion(promotion=promotion)
+        self.log(request, "promotion.deactivate", "promotions", promotion.id,
+                 before_state={"is_active": before_active},
+                 after_state={"is_active": promotion.is_active})
+        return _ok(PromotionSerializer(_get_promotion(promotion.id)).data)

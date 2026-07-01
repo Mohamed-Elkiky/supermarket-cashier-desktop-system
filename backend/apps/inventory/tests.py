@@ -152,6 +152,7 @@ class TestProductWriteSerializer:
 
 # ── ProductVariantWriteSerializer ─────────────────────────────────────────────
 
+@pytest.mark.django_db
 class TestProductVariantWriteSerializer:
     def _base(self, **overrides):
         data = {

@@ -1,15 +1,88 @@
 from rest_framework import serializers
+
+from apps.inventory.models import ProductVariant
 from .models import Order, OrderItem, Promotion, PromotionVariant
 
 
 class PromotionSerializer(serializers.ModelSerializer):
+    department_name = serializers.CharField(source="department.name", read_only=True, default=None)
+    # Write-only input — linked PromotionVariant rows are managed in create()/update().
+    # Current links are re-added to the output in to_representation().
+    variant_ids = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=ProductVariant.objects.all(),
+        required=False, default=list, write_only=True,
+    )
+
     class Meta:
         model = Promotion
         fields = [
             "id", "name", "promotion_type", "discount_value",
-            "department", "min_spend_pence",
+            "department", "department_name", "min_spend_pence",
+            "variant_ids",
             "starts_at", "ends_at", "is_active",
+            "created_by", "created_at", "updated_at",
         ]
+        read_only_fields = ["id", "created_by", "created_at", "updated_at"]
+
+    def validate(self, data):
+        promotion_type = data.get("promotion_type", getattr(self.instance, "promotion_type", None))
+
+        if promotion_type == "meal_deal":
+            min_spend = data.get(
+                "min_spend_pence",
+                getattr(self.instance, "min_spend_pence", None) if self.instance else None,
+            )
+            if not min_spend:
+                raise serializers.ValidationError(
+                    {"min_spend_pence": "min_spend_pence is required for meal_deal promotions."}
+                )
+
+            if "variant_ids" in data:
+                if not data["variant_ids"]:
+                    raise serializers.ValidationError(
+                        {"variant_ids": "variant_ids is required for meal_deal promotions."}
+                    )
+            elif self.instance is None or not self.instance.variant_links.exists():
+                raise serializers.ValidationError(
+                    {"variant_ids": "variant_ids is required for meal_deal promotions."}
+                )
+
+        starts_at = data.get("starts_at", getattr(self.instance, "starts_at", None))
+        ends_at = data.get("ends_at", getattr(self.instance, "ends_at", None))
+        if starts_at and ends_at and ends_at <= starts_at:
+            raise serializers.ValidationError({"ends_at": "ends_at must be after starts_at."})
+
+        return data
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["variant_ids"] = list(instance.variant_links.values_list("variant_id", flat=True))
+        return rep
+
+    def _set_variant_links(self, promotion, variants):
+        promotion.variant_links.all().delete()
+        if variants:
+            PromotionVariant.objects.bulk_create([
+                PromotionVariant(promotion=promotion, variant=v) for v in variants
+            ])
+
+    def create(self, validated_data):
+        variant_ids = validated_data.pop("variant_ids", [])
+        promotion = Promotion(**validated_data)
+        promotion.full_clean()
+        promotion.save()
+        self._set_variant_links(promotion, variant_ids)
+        return promotion
+
+    def update(self, instance, validated_data):
+        variant_ids = validated_data.pop("variant_ids", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.full_clean()
+        instance.save()
+        if variant_ids is not None:
+            self._set_variant_links(instance, variant_ids)
+        return instance
 
 
 class OrderItemSerializer(serializers.ModelSerializer):

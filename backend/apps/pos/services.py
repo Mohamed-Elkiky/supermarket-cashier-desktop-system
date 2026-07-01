@@ -424,6 +424,14 @@ def checkout(
     return order
 
 
+def deactivate_promotion(*, promotion: Promotion) -> Promotion:
+    """Deactivate a promotion. Idempotent — no-op if already inactive."""
+    promotion.is_active = False
+    promotion.save(update_fields=["is_active", "updated_at"])
+    logger.info("Deactivated promotion #%s", promotion.id)
+    return promotion
+
+
 def void_order(*, order: Order, reason: str = "") -> Order:
     """
     Void an open or confirmed order. Paid orders cannot be voided — use returns.
