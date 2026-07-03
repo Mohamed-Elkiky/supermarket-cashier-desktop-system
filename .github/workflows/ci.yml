@@ -15,11 +15,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install truffleHog
-        run: pip install truffleHog
-
-      - name: Run truffleHog
-        run: trufflehog --regex --entropy=True .
+      - name: Secret scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
 
   backend:
     name: Backend (Django)
