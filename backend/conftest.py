@@ -91,7 +91,7 @@ def _bypass_vault_for_encryption(monkeypatch):
 
 
 def _sqlite_compatible_log_activity(request, action, entity_type, entity_id,
-                                     before_state=None, after_state=None):
+                                    before_state=None, after_state=None):
     """Mirrors apps.core.activity.log_activity() without the ::jsonb casts."""
     import logging
     from django.utils import timezone

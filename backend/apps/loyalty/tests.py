@@ -100,7 +100,7 @@ class TestCreateCustomer:
         assert c.postcode == "AB1 2CD"
 
     def test_email_and_phone_stay_plaintext_and_queryable(self, db):
-        c = create_customer(first_name="A", last_name="B", email="plaintext@test.com", phone="07700900123")
+        _ = create_customer(first_name="A", last_name="B", email="plaintext@test.com", phone="07700900123")
         # If these were encrypted, an exact-match DB filter would never match.
         assert Customer.objects.filter(email="plaintext@test.com").exists()
         assert Customer.objects.filter(phone="07700900123").exists()

@@ -193,18 +193,18 @@ class TestExpenseImmutability:
 class TestGetExpenses:
     def test_filter_by_category(self, manager_staff):
         record_expense(category="rent", description=VALID_DESCRIPTION, amount_pence=1000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 1))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 1))
         record_expense(category="utilities", description=VALID_DESCRIPTION, amount_pence=2000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 2))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 2))
         results = get_expenses(category="rent")
         assert len(results) == 1
         assert results[0].category == "rent"
 
     def test_filter_by_date_range(self, manager_staff):
         record_expense(category="rent", description=VALID_DESCRIPTION, amount_pence=1000,
-                        recorded_by=manager_staff, expense_date=date(2026, 1, 1))
+                       recorded_by=manager_staff, expense_date=date(2026, 1, 1))
         record_expense(category="rent", description=VALID_DESCRIPTION, amount_pence=1000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 15))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 15))
         results = get_expenses(date_from=date(2026, 6, 1), date_to=date(2026, 6, 30))
         assert len(results) == 1
         assert results[0].expense_date == date(2026, 6, 15)
@@ -212,9 +212,9 @@ class TestGetExpenses:
     def test_filter_by_supplier(self, manager_staff, supplier):
         other_supplier = Supplier.objects.create(name="Other Co")
         record_expense(category="supplier_payment", description=VALID_DESCRIPTION, amount_pence=1000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 1), supplier=supplier)
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 1), supplier=supplier)
         record_expense(category="supplier_payment", description=VALID_DESCRIPTION, amount_pence=1000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 1), supplier=other_supplier)
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 1), supplier=other_supplier)
         results = get_expenses(supplier=supplier)
         assert len(results) == 1
         assert results[0].supplier_id == supplier.id
@@ -225,14 +225,14 @@ class TestGetExpenses:
 class TestExpenseSummaryByCategory:
     def test_aggregates_across_categories_within_range(self, manager_staff):
         record_expense(category="rent", description=VALID_DESCRIPTION, amount_pence=100_000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 1))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 1))
         record_expense(category="rent", description=VALID_DESCRIPTION, amount_pence=50_000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 15))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 15))
         record_expense(category="utilities", description=VALID_DESCRIPTION, amount_pence=20_000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 10))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 10))
         # Outside the queried range — must not be included.
         record_expense(category="rent", description=VALID_DESCRIPTION, amount_pence=999_999,
-                        recorded_by=manager_staff, expense_date=date(2026, 1, 1))
+                       recorded_by=manager_staff, expense_date=date(2026, 1, 1))
 
         summary = get_expense_summary_by_category(date_from=date(2026, 6, 1), date_to=date(2026, 6, 30))
         by_category = {row["category"]: row for row in summary}
@@ -275,16 +275,16 @@ class TestExpenseAPI:
 
     def test_manager_can_list(self, manager_client, manager_staff):
         record_expense(category="rent", description=VALID_DESCRIPTION, amount_pence=1000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 1))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 1))
         response = manager_client.get(reverse("expense-list-create"))
         assert response.status_code == 200
         assert len(response.data["data"]) == 1
 
     def test_list_filters_by_category(self, manager_client, manager_staff):
         record_expense(category="rent", description=VALID_DESCRIPTION, amount_pence=1000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 1))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 1))
         record_expense(category="marketing", description=VALID_DESCRIPTION, amount_pence=2000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 1))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 1))
         response = manager_client.get(reverse("expense-list-create"), {"category": "marketing"})
         assert response.status_code == 200
         assert len(response.data["data"]) == 1
@@ -317,7 +317,7 @@ class TestExpenseSummaryAPI:
 
     def test_manager_can_view_summary(self, manager_client, manager_staff):
         record_expense(category="rent", description=VALID_DESCRIPTION, amount_pence=100_000,
-                        recorded_by=manager_staff, expense_date=date(2026, 6, 1))
+                       recorded_by=manager_staff, expense_date=date(2026, 6, 1))
         response = manager_client.get(reverse("expense-summary"), {"date_from": "2026-06-01", "date_to": "2026-06-30"})
         assert response.status_code == 200
         assert response.data["data"][0]["category"] == "rent"

@@ -55,7 +55,7 @@ def other_cashier_staff(dept):
 
 
 def _make_staff_user(role="cashier", suffix="", department=None,
-                      commission_rate=Decimal("0"), hourly_wage=Decimal("0")):
+                     commission_rate=Decimal("0"), hourly_wage=Decimal("0")):
     email = f"{role}{suffix}@staff-api-test.com"
     user = User.objects.create_user(email=email, password="testpass123")
     staff = Staff.objects.create(
@@ -213,38 +213,38 @@ class TestRotaEntry:
 
     def test_update_entry(self, staff_member):
         rota = create_rota_entry(staff=staff_member, week_commencing=MONDAY, shift_date=MONDAY,
-                                  shift_start=time(9, 0), shift_end=time(17, 0))
+                                 shift_start=time(9, 0), shift_end=time(17, 0))
         updated = update_rota_entry(rota, {"shift_end": time(18, 0)})
         assert updated.shift_end == time(18, 0)
 
     def test_update_with_invalid_shift_times_rejected(self, staff_member):
         rota = create_rota_entry(staff=staff_member, week_commencing=MONDAY, shift_date=MONDAY,
-                                  shift_start=time(9, 0), shift_end=time(17, 0))
+                                 shift_start=time(9, 0), shift_end=time(17, 0))
         with pytest.raises(ValidationError):
             update_rota_entry(rota, {"shift_start": time(20, 0)})
 
     def test_delete_entry(self, staff_member):
         rota = create_rota_entry(staff=staff_member, week_commencing=MONDAY, shift_date=MONDAY,
-                                  shift_start=time(9, 0), shift_end=time(17, 0))
+                                 shift_start=time(9, 0), shift_end=time(17, 0))
         delete_rota_entry(rota)
         assert not Rota.objects.filter(pk=rota.pk).exists()
 
     def test_get_rota_for_week(self, staff_member, other_cashier_staff):
         create_rota_entry(staff=staff_member, week_commencing=MONDAY, shift_date=MONDAY,
-                           shift_start=time(9, 0), shift_end=time(17, 0))
+                          shift_start=time(9, 0), shift_end=time(17, 0))
         create_rota_entry(staff=other_cashier_staff, week_commencing=MONDAY, shift_date=MONDAY,
-                           shift_start=time(10, 0), shift_end=time(18, 0))
+                          shift_start=time(10, 0), shift_end=time(18, 0))
         results = get_rota_for_week(week_commencing=MONDAY)
         assert len(results) == 2
 
     def test_get_rota_for_week_filters_by_department(self, staff_member, dept):
         other_dept = Department.objects.create(name="Other Dept Rota", slug="other-dept-rota", display_order=2)
         other_staff = Staff.objects.create(first_name="X", last_name="Y", email="xy-rota@staff-test.com",
-                                            role="cashier", department=other_dept)
+                                           role="cashier", department=other_dept)
         create_rota_entry(staff=staff_member, department=dept, week_commencing=MONDAY, shift_date=MONDAY,
-                           shift_start=time(9, 0), shift_end=time(17, 0))
+                          shift_start=time(9, 0), shift_end=time(17, 0))
         create_rota_entry(staff=other_staff, department=other_dept, week_commencing=MONDAY, shift_date=MONDAY,
-                           shift_start=time(9, 0), shift_end=time(17, 0))
+                          shift_start=time(9, 0), shift_end=time(17, 0))
         results = get_rota_for_week(week_commencing=MONDAY, department=dept)
         assert len(results) == 1
         assert results[0].staff_id == staff_member.id
@@ -299,7 +299,7 @@ class TestBuildPayrollExport:
     def test_filters_by_department(self, staff_member, dept):
         other_dept = Department.objects.create(name="Other Dept Payroll", slug="other-dept-payroll", display_order=2)
         other_staff = Staff.objects.create(first_name="X", last_name="Y", email="xy-payroll@staff-test.com",
-                                            role="cashier", department=other_dept)
+                                           role="cashier", department=other_dept)
         rows = build_payroll_export(date_from=date(2026, 6, 1), date_to=date(2026, 6, 30), department=dept)
         staff_ids = {r["staff_id"] for r in rows}
         assert staff_member.id in staff_ids
@@ -434,21 +434,21 @@ class TestRotaAPI:
 
     def test_week_view(self, dept_manager_client, staff_member):
         create_rota_entry(staff=staff_member, week_commencing=MONDAY, shift_date=MONDAY,
-                           shift_start=time(9, 0), shift_end=time(17, 0))
+                          shift_start=time(9, 0), shift_end=time(17, 0))
         response = dept_manager_client.get(reverse("rota-week"), {"week_commencing": MONDAY.isoformat()})
         assert response.status_code == 200
         assert len(response.data["data"]) == 1
 
     def test_delete(self, dept_manager_client, staff_member):
         rota = create_rota_entry(staff=staff_member, week_commencing=MONDAY, shift_date=MONDAY,
-                                  shift_start=time(9, 0), shift_end=time(17, 0))
+                                 shift_start=time(9, 0), shift_end=time(17, 0))
         response = dept_manager_client.delete(reverse("rota-detail", kwargs={"pk": rota.pk}))
         assert response.status_code == 200
         assert not Rota.objects.filter(pk=rota.pk).exists()
 
     def test_cashier_forbidden_on_delete(self, cashier_client, dept_manager_client, staff_member):
         rota = create_rota_entry(staff=staff_member, week_commencing=MONDAY, shift_date=MONDAY,
-                                  shift_start=time(9, 0), shift_end=time(17, 0))
+                                 shift_start=time(9, 0), shift_end=time(17, 0))
         response = cashier_client.delete(reverse("rota-detail", kwargs={"pk": rota.pk}))
         assert response.status_code == 403
 

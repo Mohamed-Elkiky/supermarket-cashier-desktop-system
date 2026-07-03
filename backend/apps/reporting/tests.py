@@ -313,6 +313,7 @@ class TestGetStaffPerformance:
         rows = get_staff_performance(date_from=DAY_1, date_to=DAY_2, staff=cashier_staff)
         assert len(rows) == 1
         assert rows[0]["staff_id"] == cashier_staff.id
+        assert other_staff.id not in {r["staff_id"] for r in rows}
 
 
 # ── API permission boundaries + validation ────────────────────────────────────

@@ -88,7 +88,7 @@ class AllergenAuditExportView(APIView):
         parameters=[
             OpenApiParameter("department", OpenApiTypes.INT, description="Filter by department ID"),
             OpenApiParameter("updated_since", OpenApiTypes.DATE,
-                              description="Only variants whose allergen profile changed on/after this date"),
+                             description="Only variants whose allergen profile changed on/after this date"),
         ],
         responses={200: OpenApiResponse(description="Flat list of variant allergen rows")},
         tags=["Inventory"],
@@ -103,7 +103,7 @@ class AllergenAuditExportView(APIView):
             if not parsed_date:
                 return Response(
                     {"success": False, "error": {"code": "ValidationError",
-                                                  "errors": ["'updated_since' must be an ISO date (YYYY-MM-DD)."]}},
+                                                 "errors": ["'updated_since' must be an ISO date (YYYY-MM-DD)."]}},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             updated_since = timezone.make_aware(datetime.combine(parsed_date, time.min))
@@ -130,9 +130,9 @@ class ProductListCreateView(ActivityLogMixin, APIView):
             OpenApiParameter("department", OpenApiTypes.INT, description="Filter by department ID"),
             OpenApiParameter("active", OpenApiTypes.BOOL, description="Include only active (default: true)"),
             OpenApiParameter("allergen", OpenApiTypes.STR,
-                              description="Filter by allergen EU code(s), comma-separated for OR (e.g. MLK,EGG)"),
+                             description="Filter by allergen EU code(s), comma-separated for OR (e.g. MLK,EGG)"),
             OpenApiParameter("exclude_may_contain", OpenApiTypes.BOOL,
-                              description="With ?allergen=, only match variants that definitely contain it"),
+                             description="With ?allergen=, only match variants that definitely contain it"),
         ],
         responses={200: ProductSerializer(many=True)},
         tags=["Inventory"],
@@ -207,9 +207,9 @@ class ProductVariantListCreateView(ActivityLogMixin, APIView):
         summary="List variants",
         parameters=[
             OpenApiParameter("allergen", OpenApiTypes.STR,
-                              description="Filter by allergen EU code(s), comma-separated for OR (e.g. MLK,EGG)"),
+                             description="Filter by allergen EU code(s), comma-separated for OR (e.g. MLK,EGG)"),
             OpenApiParameter("exclude_may_contain", OpenApiTypes.BOOL,
-                              description="With ?allergen=, only match variants that definitely contain it"),
+                             description="With ?allergen=, only match variants that definitely contain it"),
         ],
         responses={200: ProductVariantSerializer(many=True)},
         tags=["Inventory"],
