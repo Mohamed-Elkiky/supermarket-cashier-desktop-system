@@ -5,6 +5,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.settings import api_settings
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample
 
 from .serializers import LoginSerializer, LogoutSerializer, RefreshSerializer
@@ -197,6 +198,25 @@ class SilentRefreshView(APIView):
         try:
             refresh = RefreshToken(serializer.validated_data["refresh"])
             new_access = str(refresh.access_token)
+
+            # Mirrors rest_framework_simplejwt.serializers.TokenRefreshSerializer's
+            # own rotation logic: blacklist the old jti, then mutate this SAME
+            # token object into a new one (new jti/exp/iat). Mutating in place
+            # rather than minting RefreshToken.for_user() fresh naturally
+            # preserves any other claims already embedded on it — e.g. the
+            # "role" claim services.generate_tokens() sets at login.
+            if api_settings.ROTATE_REFRESH_TOKENS:
+                if api_settings.BLACKLIST_AFTER_ROTATION:
+                    try:
+                        refresh.blacklist()
+                    except AttributeError:
+                        # Blacklist app not installed — nothing to do.
+                        pass
+
+                refresh.set_jti()
+                refresh.set_exp()
+                refresh.set_iat()
+
             new_refresh = str(refresh)
             return Response(
                 {"success": True, "data": {"access": new_access, "refresh": new_refresh}},
