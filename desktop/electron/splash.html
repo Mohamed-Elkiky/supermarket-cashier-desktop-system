@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;"
+    />
+    <title>Loading Supermarket POS</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        color: #f1f5f9;
+        background: radial-gradient(circle at 50% 30%, #1e293b 0%, #0f172a 100%);
+        border: 1px solid #334155;
+        border-radius: 10px;
+      }
+      .logo {
+        font-size: 52px;
+        line-height: 1;
+      }
+      .title {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+      .subtitle {
+        font-size: 13px;
+        color: #94a3b8;
+      }
+      .spinner {
+        width: 34px;
+        height: 34px;
+        border: 3px solid rgba(148, 163, 184, 0.25);
+        border-top-color: #22c55e;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="logo" aria-hidden="true">🛒</div>
+    <div class="title">Supermarket POS</div>
+    <div class="spinner" role="progressbar" aria-label="Loading"></div>
+    <div class="subtitle">Starting up…</div>
+  </body>
+</html>
